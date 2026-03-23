@@ -17,6 +17,8 @@ st.sidebar.header("Portfolio Configuration")
 
 PREDEFINED_PORTFOLIOS = {
     "Custom": {"tickers": "AAPL, TLT, SPY", "weights": "40, 40, 20"},
+    "Comprehensive Optimized (2004+)": {"tickers": "QQQ, GLD, SHY, IEF, DVY, TLT", "weights": "24.8, 36.9, 28.1, 4.9, 2.7, 2.6"},
+    "Low Drawdown Growth (1990+)": {"tickers": "QQQ, TLT, GLD, VTI", "weights": "30, 45, 10, 15"},
     "60/40 Portfolio (Stocks/Bonds)": {"tickers": "SPY, TLT", "weights": "60, 40"},
     "All Weather (Ray Dalio)": {"tickers": "VTI, TLT, IEF, GLD, DBC", "weights": "30, 40, 15, 7.5, 7.5"},
     "Permanent Portfolio (Harry Browne)": {"tickers": "SPY, TLT, SHY, GLD", "weights": "25, 25, 25, 25"},
@@ -25,6 +27,7 @@ PREDEFINED_PORTFOLIOS = {
 
 st.sidebar.subheader("Strategy Selection")
 selected_strategy = st.sidebar.selectbox("Choose a Strategy", list(PREDEFINED_PORTFOLIOS.keys()))
+rebalance = st.sidebar.selectbox("Rebalance Frequency", ["None", "Monthly", "Annually"], index=1)
 
 # Dynamic inputs for tickers and weights
 st.sidebar.subheader("Assets")
@@ -41,7 +44,6 @@ except ValueError:
 start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime('2018-01-01'), min_value=pd.to_datetime('1990-01-01'))
 end_date = st.sidebar.date_input("End Date", value=pd.to_datetime('today'), min_value=pd.to_datetime('1990-01-01'))
 initial_capital = st.sidebar.number_input("Initial Capital", min_value=1000, value=10000, step=1000)
-rebalance = st.sidebar.selectbox("Rebalance Frequency", ["None", "Monthly", "Annually"])
 benchmark = st.sidebar.text_input("Benchmark Ticker", "SPY")
 
 if len(tickers) != len(weights):
