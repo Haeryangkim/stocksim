@@ -10,6 +10,35 @@ warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="Stock Portfolio Backtester", layout="wide")
 
+@st.cache_data
+def load_all_tickers():
+    try:
+        import FinanceDataReader as fdr
+        dfs = []
+        
+        # 1. KRX
+        df_krx = fdr.StockListing('KRX')
+        def map_krx(m):
+            if m == 'KOSPI': return '.KS'
+            elif pd.isna(m) or m == '': return '.KS'
+            else: return '.KQ'
+        df_krx['YF_Ticker'] = df_krx['Code'] + df_krx['Market'].apply(map_krx)
+        df_krx['Display'] = "[" + df_krx['YF_Ticker'] + "] " + df_krx['Name'] + " (KRX)"
+        dfs.append(df_krx[['Name', 'YF_Ticker', 'Display']])
+        
+        # 2. US Markets
+        for market in ['NASDAQ', 'NYSE', 'AMEX', 'ETF/US']:
+            df_us = fdr.StockListing(market)
+            df_us['YF_Ticker'] = df_us['Symbol']
+            df_us['Display'] = "[" + df_us['YF_Ticker'] + "] " + df_us['Name'] + f" ({market})"
+            dfs.append(df_us[['Name', 'YF_Ticker', 'Display']])
+            
+        final_df = pd.concat(dfs, ignore_index=True)
+        final_df = final_df.drop_duplicates(subset=['YF_Ticker'])
+        return final_df
+    except Exception as e:
+        return pd.DataFrame()
+
 st.title("Python Stock Backtester")
 st.markdown("Replicating comprehensive quantitative analysis reports using Streamlit & yfinance.")
 
@@ -22,12 +51,26 @@ PREDEFINED_PORTFOLIOS = {
     "60/40 Portfolio (Stocks/Bonds)": {"tickers": "SPY, TLT", "weights": "60, 40"},
     "All Weather (Ray Dalio)": {"tickers": "VTI, TLT, IEF, GLD, DBC", "weights": "30, 40, 15, 7.5, 7.5"},
     "Permanent Portfolio (Harry Browne)": {"tickers": "SPY, TLT, SHY, GLD", "weights": "25, 25, 25, 25"},
-    "Golden Butterfly": {"tickers": "VTI, IWN, TLT, SHY, GLD", "weights": "20, 20, 20, 20, 20"}
+    "Golden Butterfly": {"tickers": "VTI, IWN, TLT, SHY, GLD", "weights": "20, 20, 20, 20, 20"},
+    "Korean Blue Chips (Samsung/SkHynix)": {"tickers": "005930.KS, 000660.KS", "weights": "50, 50"}
 }
 
 st.sidebar.subheader("Strategy Selection")
 selected_strategy = st.sidebar.selectbox("Choose a Strategy", list(PREDEFINED_PORTFOLIOS.keys()))
 rebalance = st.sidebar.selectbox("Rebalance Frequency", ["None", "Monthly", "Annually"], index=1)
+
+# Ticker Search
+st.sidebar.subheader("Ticker Search (All Markets)")
+with st.spinner("Loading ticker database..."):
+    df_all = load_all_tickers()
+
+if not df_all.empty:
+    search_query = st.sidebar.selectbox("Search Company/ETF Name", options=[""] + df_all['Display'].tolist())
+    if search_query:
+        selected_row = df_all[df_all['Display'] == search_query]
+        if not selected_row.empty:
+            selected_ticker = selected_row.iloc[0]['YF_Ticker']
+            st.sidebar.info(f"Ticker for yfinance: **{selected_ticker}**\n\n*(Copy and paste into Tickers field below)*")
 
 # Dynamic inputs for tickers and weights
 st.sidebar.subheader("Assets")
@@ -44,6 +87,8 @@ except ValueError:
 start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime('2018-01-01'), min_value=pd.to_datetime('1990-01-01'))
 end_date = st.sidebar.date_input("End Date", value=pd.to_datetime('today'), min_value=pd.to_datetime('1990-01-01'))
 initial_capital = st.sidebar.number_input("Initial Capital", min_value=1000, value=10000, step=1000)
+installment_amount = st.sidebar.number_input("Installment Amount", min_value=0, value=0, step=100)
+installment_frequency = st.sidebar.selectbox("Installment Frequency", ["None", "Monthly", "Annually"])
 benchmark = st.sidebar.text_input("Benchmark Ticker", "SPY")
 
 if len(tickers) != len(weights):
@@ -55,7 +100,7 @@ else:
         tickers_weights = dict(zip(tickers, weights))
         
         with st.spinner("Fetching data and running backtest..."):
-            bt = PortfolioBacktest(tickers_weights, start_date, end_date, initial_capital, benchmark, rebalance)
+            bt = PortfolioBacktest(tickers_weights, start_date, end_date, initial_capital, benchmark, rebalance, installment_amount, installment_frequency)
             try:
                 bt.run()
                 success = True
@@ -71,9 +116,14 @@ else:
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**Investment Parameters**")
-                st.write(f"- **Initial Balance:** ${initial_capital:,.2f}")
+                st.write(f"- **Initial Balance:** ${bt.initial_capital:,.2f}")
+                if bt.installment_amount > 0 and bt.installment_frequency != 'None':
+                    st.write(f"- **Total Invested:** ${bt.invested_capitals.iloc[-1]:,.2f}")
                 st.write(f"- **Final Balance:** ${bt.portfolio_value.iloc[-1]:,.2f}")
+                st.write(f"- **Total Profit:** ${bt.portfolio_value.iloc[-1] - bt.invested_capitals.iloc[-1]:,.2f}")
                 st.write(f"- **Rebalancing:** {rebalance}")
+                if bt.installment_amount > 0 and bt.installment_frequency != 'None':
+                    st.write(f"- **Installment:** ${bt.installment_amount:,.2f} ({bt.installment_frequency})")
                 st.write(f"- **Time Period:** {start_date} to {end_date}")
             with col2:
                 fig, ax = plt.subplots(figsize=(4, 4))

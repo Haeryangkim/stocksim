@@ -9,7 +9,7 @@ warnings.filterwarnings('ignore')
 RISK_FREE_RATE = 0.04  # Assuming 4% risk free rate for simplicity
 
 class PortfolioBacktest:
-    def __init__(self, tickers_weights, start_date, end_date, initial_capital=10000, benchmark='SPY', rebalance='Monthly'):
+    def __init__(self, tickers_weights, start_date, end_date, initial_capital=10000, benchmark='SPY', rebalance='Monthly', installment_amount=0, installment_frequency='None'):
         self.tickers_weights = tickers_weights
         self.tickers = list(tickers_weights.keys())
         self.weights = np.array(list(tickers_weights.values()))
@@ -18,6 +18,8 @@ class PortfolioBacktest:
         self.initial_capital = initial_capital
         self.benchmark = benchmark
         self.rebalance = rebalance
+        self.installment_amount = installment_amount
+        self.installment_frequency = installment_frequency
         
         if not np.isclose(sum(self.weights), 1.0):
             raise ValueError("Weights must sum to 1.0")
@@ -59,22 +61,52 @@ class PortfolioBacktest:
         daily_returns = []
         current_weights = self.weights.copy()
         
-        # Using a loop to handle rebalancing precisely
+        current_dollar_value = self.initial_capital
+        bench_dollar_value = self.initial_capital
+        invested_capital = self.initial_capital
+        
+        portfolio_dollar_values = []
+        bench_values = []
+        invested_capitals = []
+        
         dates = returns.index
         for i, (date, daily_ret) in enumerate(returns.iterrows()):
             is_rebalance = False
+            is_installment = False
+            
             if i > 0:
                 prev_date = dates[i-1]
-                if self.rebalance == 'Monthly' and date.month != prev_date.month:
+                month_changed = date.month != prev_date.month
+                year_changed = date.year != prev_date.year
+                
+                if self.rebalance == 'Monthly' and month_changed:
                     is_rebalance = True
-                elif self.rebalance == 'Annually' and date.year != prev_date.year:
+                elif self.rebalance == 'Annually' and year_changed:
                     is_rebalance = True
+                
+                if self.installment_frequency == 'Monthly' and month_changed:
+                    is_installment = True
+                elif self.installment_frequency == 'Annually' and year_changed:
+                    is_installment = True
             
             if is_rebalance:
                 current_weights = self.weights.copy()
             
             port_ret = np.dot(current_weights, daily_ret.values)
             daily_returns.append(port_ret)
+            
+            # Compound the dollar value BEFORE the end-of-period installment is added
+            current_dollar_value = current_dollar_value * (1 + port_ret)
+            bench_dollar_value = bench_dollar_value * (1 + self.bench_returns.iloc[i])
+            
+            if is_installment:
+                current_dollar_value += self.installment_amount
+                bench_dollar_value += self.installment_amount
+                invested_capital += self.installment_amount
+            
+            portfolio_dollar_values.append(current_dollar_value)
+            bench_values.append(bench_dollar_value)
+            invested_capitals.append(invested_capital)
             
             current_weights = current_weights * (1 + daily_ret.values)
             sum_weights = np.sum(current_weights)
@@ -83,10 +115,11 @@ class PortfolioBacktest:
             
         self.portfolio_returns = pd.Series(daily_returns, index=returns.index)
         self.cumulative_returns = (1 + self.portfolio_returns).cumprod()
-        self.portfolio_value = self.initial_capital * self.cumulative_returns
+        self.portfolio_value = pd.Series(portfolio_dollar_values, index=returns.index)
         
         self.bench_cumulative = (1 + self.bench_returns).cumprod()
-        self.bench_value = self.initial_capital * self.bench_cumulative
+        self.bench_value = pd.Series(bench_values, index=returns.index)
+        self.invested_capitals = pd.Series(invested_capitals, index=returns.index)
         
         self.calculate_metrics()
         
@@ -95,8 +128,8 @@ class PortfolioBacktest:
         years = days / 252.0 if days > 0 else 1
         
         # CAGR
-        self.cagr = (self.portfolio_value.iloc[-1] / self.initial_capital) ** (1 / years) - 1
-        self.bench_cagr = (self.bench_value.iloc[-1] / self.initial_capital) ** (1 / years) - 1
+        self.cagr = self.cumulative_returns.iloc[-1] ** (1 / years) - 1
+        self.bench_cagr = self.bench_cumulative.iloc[-1] ** (1 / years) - 1
         
         # Volatility
         self.volatility = self.portfolio_returns.std() * np.sqrt(252)
@@ -107,12 +140,12 @@ class PortfolioBacktest:
         self.bench_sharpe = (self.bench_cagr - RISK_FREE_RATE) / self.bench_volatility if self.bench_volatility > 0 else 0
         
         # Max Drawdown
-        roll_max = self.portfolio_value.cummax()
-        drawdowns = self.portfolio_value / roll_max - 1.0
+        roll_max = self.cumulative_returns.cummax()
+        drawdowns = self.cumulative_returns / roll_max - 1.0
         self.max_drawdown = drawdowns.min()
         
-        bench_roll_max = self.bench_value.cummax()
-        bench_drawdowns = self.bench_value / bench_roll_max - 1.0
+        bench_roll_max = self.bench_cumulative.cummax()
+        bench_drawdowns = self.bench_cumulative / bench_roll_max - 1.0
         self.bench_max_drawdown = bench_drawdowns.min()
         
         # Beta & Alpha
