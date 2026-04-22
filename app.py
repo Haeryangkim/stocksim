@@ -43,15 +43,15 @@ PREDEFINED_PORTFOLIOS = {
 }
 
 st.sidebar.subheader("Strategy Selection")
-selected_strategy = st.sidebar.selectbox("Choose a Strategy", list(PREDEFINED_PORTFOLIOS.keys()))
-rebalance = st.sidebar.selectbox("Rebalance Frequency", ["None", "Monthly", "Annually"], index=1)
+selected_strategy = st.sidebar.selectbox("Choose a Strategy", list(PREDEFINED_PORTFOLIOS.keys()), help="이미 구성된 유명 투자 전략을 선택해 바로 테스트해볼 수 있습니다. Custom 선택 시 직접 종목과 비중을 입력할 수 있습니다.")
+rebalance = st.sidebar.selectbox("Rebalance Frequency", ["None", "Monthly", "Annually"], index=1, help="시장 변화로 틀어진 자산 비중을 지정한 주기마다 원래 비중으로 되돌리는(사고파는) 리밸런싱을 의미합니다.")
 
 # Ticker Search
 st.sidebar.subheader("Ticker Search (KRX Only)")
 df_krx = load_krx_tickers()
 
 if not df_krx.empty:
-    search_query = st.sidebar.selectbox("Search Korean Company Name", options=[""] + df_krx['Display'].tolist())
+    search_query = st.sidebar.selectbox("Search Korean Company Name", options=[""] + df_krx['Display'].tolist(), help="한국 주식의 회사명이나 코드를 검색하여 yfinance 호환 티커를 찾을 수 있습니다.")
     if search_query:
         selected_row = df_krx[df_krx['Display'] == search_query]
         if not selected_row.empty:
@@ -60,8 +60,8 @@ if not df_krx.empty:
 
 # Dynamic inputs for tickers and weights
 st.sidebar.subheader("Assets")
-tickers_input = st.sidebar.text_input("Tickers (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["tickers"])
-weights_input = st.sidebar.text_input("Weights (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["weights"])
+tickers_input = st.sidebar.text_input("Tickers (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["tickers"], help="투자할 종목의 티커를 쉼표(,)로 구분해서 적어주세요. (예: AAPL, SPY, 005930.KS)")
+weights_input = st.sidebar.text_input("Weights (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["weights"], help="티커 순서에 맞춰 목표 투자 비중(%)을 쉼표로 적어주세요. 총합이 항상 100이어야 합니다.")
 
 tickers = [t.strip() for t in tickers_input.split(",")]
 try:
@@ -70,12 +70,12 @@ except ValueError:
     st.sidebar.error("Weights must be numbers")
     weights = []
 
-start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime('2018-01-01'), min_value=pd.to_datetime('1990-01-01'))
-end_date = st.sidebar.date_input("End Date", value=pd.to_datetime('today'), min_value=pd.to_datetime('1990-01-01'))
-initial_capital = st.sidebar.number_input("Initial Capital", min_value=1000, value=10000, step=1000)
-installment_amount = st.sidebar.number_input("Installment Amount", min_value=0, value=0, step=100)
-installment_frequency = st.sidebar.selectbox("Installment Frequency", ["None", "Monthly", "Annually"])
-benchmark = st.sidebar.text_input("Benchmark Ticker", "SPY")
+start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime('2018-01-01'), min_value=pd.to_datetime('1990-01-01'), help="투자를 시작할(백테스트 시작) 기준일입니다. 상장 전인 종목이 있다면 자동으로 해당 종목 상장일로 연기됩니다.")
+end_date = st.sidebar.date_input("End Date", value=pd.to_datetime('today'), min_value=pd.to_datetime('1990-01-01'), help="투자를 종료할 시점입니다.")
+initial_capital = st.sidebar.number_input("Initial Capital", min_value=1000, value=10000, step=1000, help="포트폴리오에 최초 편입할 자본금입니다. (계산 편의상 달러로 표기됩니다)")
+installment_amount = st.sidebar.number_input("Installment Amount", min_value=0, value=0, step=100, help="적립식으로 매 기간마다 투입할 추가 금액입니다.")
+installment_frequency = st.sidebar.selectbox("Installment Frequency", ["None", "Monthly", "Annually"], help="지정한 적립 투자 금액을 매월 투입할지, 매년 투입할지 결정합니다.")
+benchmark = st.sidebar.text_input("Benchmark Ticker", "SPY", help="내 포트폴리오의 성과와 비교할 기준 지수(시장 평균 등)입니다. 기본값은 미국 S&P 500 ETF(SPY)입니다.")
 
 if len(tickers) != len(weights):
     st.sidebar.error("Number of tickers and weights must match.")
@@ -101,7 +101,7 @@ else:
                 st.warning(f"⚠️ **상장일 알림**: 설정하신 시작일({start_date}) 당시에 상장되지 않은 종목이 포함되어 있습니다. 가장 늦게 상장된 종목의 데이터가 존재하는 **{bt.actual_start_date}** 부터 백테스트가 자동으로 조절되어 실행되었습니다.")
             
             # --- Overview & Allocation ---
-            st.header("1. Portfolio Overview & Allocation")
+            st.header("1. Portfolio Overview & Allocation", help="백테스트의 최종 자산 평가 금액, 누적 원금, 순수익 요약과 포트폴리오의 비중 파이를 보여줍니다.")
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**Investment Parameters**")
@@ -121,7 +121,7 @@ else:
                 st.pyplot(fig)
                 
             # --- Performance & Returns ---
-            st.header("2. Performance & Returns")
+            st.header("2. Performance & Returns", help="투자 기간 동안 포트폴리오 가치와 벤치마크(기준 시장) 가치의 누적 상승 추이를 시각적인 그래프로 비교합니다.")
             
             # Growth Chart
             st.subheader("Portfolio Growth")
@@ -149,7 +149,7 @@ else:
             st.table(metrics_df.set_index('Metric'))
             
             # --- Drawdowns Analysis ---
-            st.header("4. Drawdowns Analysis")
+            st.header("4. Drawdowns Analysis", help="역대 최고점 대비 자산이 얼마나 하락했는지(손실폭)를 보여주는 낙폭 차트입니다. 그래프가 아래로 패인 구간이 경제 위기나 하락장 구간입니다.")
             port_cummax = bt.portfolio_value.cummax()
             port_drawdown = (bt.portfolio_value / port_cummax - 1.0) * 100
             
@@ -163,7 +163,7 @@ else:
             st.line_chart(dd_df)
             
             # --- Asset Level ---
-            st.header("5. Asset-Level Analysis")
+            st.header("5. Asset-Level Analysis", help="포트폴리오 구성 자산들의 일간 수익률 상관관계를 색상으로 표기한 히트맵입니다. 상관계수가 음수(파란색)이거나 낮은 자산끼리 섞이면 위험 분산(헤지) 효과가 커집니다.")
             st.subheader("Asset Correlations (Daily Returns)")
             returns = bt.prices.pct_change().dropna()
             corr = returns.corr()
