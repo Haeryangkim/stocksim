@@ -205,4 +205,4 @@ else:
 # Display usage stats in sidebar
 current_stats = load_stats()
 st.sidebar.markdown("---")
-st.sidebar.caption(f"👁️ 일일/누적 접속: {current_stats.get('page_views', 0)} | 🚀 백테스트 실행: {current_stats.get('executions', 0)}")
+st.sidebar.caption(f"Total Views: {current_stats.get('page_views', 0)} | Total Executions: {current_stats.get('executions', 0)}")
