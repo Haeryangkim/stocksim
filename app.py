@@ -11,12 +11,9 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="Stock Portfolio Backtester", layout="wide")
 
 @st.cache_data
-def load_all_tickers():
+def load_krx_tickers():
     try:
         import FinanceDataReader as fdr
-        dfs = []
-        
-        # 1. KRX
         df_krx = fdr.StockListing('KRX')
         def map_krx(m):
             if m == 'KOSPI': return '.KS'
@@ -24,18 +21,8 @@ def load_all_tickers():
             else: return '.KQ'
         df_krx['YF_Ticker'] = df_krx['Code'] + df_krx['Market'].apply(map_krx)
         df_krx['Display'] = "[" + df_krx['YF_Ticker'] + "] " + df_krx['Name'] + " (KRX)"
-        dfs.append(df_krx[['Name', 'YF_Ticker', 'Display']])
-        
-        # 2. US Markets
-        for market in ['NASDAQ', 'NYSE', 'AMEX', 'ETF/US']:
-            df_us = fdr.StockListing(market)
-            df_us['YF_Ticker'] = df_us['Symbol']
-            df_us['Display'] = "[" + df_us['YF_Ticker'] + "] " + df_us['Name'] + f" ({market})"
-            dfs.append(df_us[['Name', 'YF_Ticker', 'Display']])
-            
-        final_df = pd.concat(dfs, ignore_index=True)
-        final_df = final_df.drop_duplicates(subset=['YF_Ticker'])
-        return final_df
+        df_krx = df_krx.drop_duplicates(subset=['YF_Ticker'])
+        return df_krx[['Name', 'YF_Ticker', 'Display']]
     except Exception as e:
         return pd.DataFrame()
 
@@ -60,14 +47,13 @@ selected_strategy = st.sidebar.selectbox("Choose a Strategy", list(PREDEFINED_PO
 rebalance = st.sidebar.selectbox("Rebalance Frequency", ["None", "Monthly", "Annually"], index=1)
 
 # Ticker Search
-st.sidebar.subheader("Ticker Search (All Markets)")
-with st.spinner("Loading ticker database..."):
-    df_all = load_all_tickers()
+st.sidebar.subheader("Ticker Search (KRX Only)")
+df_krx = load_krx_tickers()
 
-if not df_all.empty:
-    search_query = st.sidebar.selectbox("Search Company/ETF Name", options=[""] + df_all['Display'].tolist())
+if not df_krx.empty:
+    search_query = st.sidebar.selectbox("Search Korean Company Name", options=[""] + df_krx['Display'].tolist())
     if search_query:
-        selected_row = df_all[df_all['Display'] == search_query]
+        selected_row = df_krx[df_krx['Display'] == search_query]
         if not selected_row.empty:
             selected_ticker = selected_row.iloc[0]['YF_Ticker']
             st.sidebar.info(f"Ticker for yfinance: **{selected_ticker}**\n\n*(Copy and paste into Tickers field below)*")
@@ -111,6 +97,9 @@ else:
         if success:
             st.success("Backtest complete!")
             
+            if hasattr(bt, 'start_date_adjusted') and bt.start_date_adjusted:
+                st.warning(f"⚠️ **상장일 알림**: 설정하신 시작일({start_date}) 당시에 상장되지 않은 종목이 포함되어 있습니다. 가장 늦게 상장된 종목의 데이터가 존재하는 **{bt.actual_start_date}** 부터 백테스트가 자동으로 조절되어 실행되었습니다.")
+            
             # --- Overview & Allocation ---
             st.header("1. Portfolio Overview & Allocation")
             col1, col2 = st.columns(2)
@@ -144,6 +133,14 @@ else:
             
             # --- Risk & Return Metrics ---
             st.header("3. Risk & Return Metrics")
+            st.markdown("""
+            * **CAGR** (Compound Annual Growth Rate): 투자 기간 동안의 연평균 복리 수익률입니다.
+            * **Daily Volatility (Ann.)** (연환산 변동성): 포트폴리오 수익률이 얼마나 출렁이는지를 나타내는 위험 지표입니다. 낮을수록 안정적입니다.
+            * **Sharpe Ratio** (샤프 지수): 1단위 위험을 감수할 때 얻을 수 있는 초과 수익률입니다. 높을수록 좋습니다.
+            * **Max Drawdown** (MDD, 최대 낙폭): 고점 대비 최대로 하락한 비율을 의미하며, 해당 포트폴리오의 가장 큰 손실 위험을 나타냅니다.
+            * **Beta** (베타): 시장(벤치마크)의 움직임에 얼마나 민감하게 반응하는지를 수치화한 것입니다. 1보다 크면 시장보다 변동이 크다는 뜻입니다.
+            * **Alpha** (알파): 벤치마크 대비 포트폴리오의 실질적인 초과 수익률입니다. 높을수록 좋습니다.
+            """)
             metrics_df = pd.DataFrame({
                 'Metric': ['CAGR', 'Daily Volatility (Ann.)', 'Sharpe Ratio', 'Max Drawdown', 'Beta', 'Alpha'],
                 'Portfolio': [f"{bt.cagr:.2%}", f"{bt.volatility:.2%}", f"{bt.sharpe:.2f}", f"{bt.max_drawdown:.2%}", f"{bt.beta:.2f}", f"{bt.alpha:.2%}"],

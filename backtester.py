@@ -50,6 +50,17 @@ class PortfolioBacktest:
         self.prices = adj_close[self.tickers]
         self.bench_prices = adj_close[self.benchmark]
         
+        if not self.prices.empty:
+            actual_start_pd = self.prices.index.min()
+            requested_start_pd = pd.to_datetime(self.start_date)
+            if (actual_start_pd - requested_start_pd).days > 7:
+                self.start_date_adjusted = True
+                self.actual_start_date = actual_start_pd.strftime('%Y-%m-%d')
+            else:
+                self.start_date_adjusted = False
+        else:
+            self.start_date_adjusted = False
+        
     def run(self):
         self.fetch_data()
         
