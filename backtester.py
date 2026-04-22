@@ -8,6 +8,29 @@ warnings.filterwarnings('ignore')
 
 RISK_FREE_RATE = 0.04  # Assuming 4% risk free rate for simplicity
 
+INFLATION_BENCHMARK_KEYS = {"CPI", "INFLATION", "INFLATION (CPI)"}
+FRED_CPI_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCSL"
+
+
+def _fetch_cpi_series(start, end):
+    """Fetch monthly CPI from FRED and return as a monthly series indexed by date."""
+    df = pd.read_csv(FRED_CPI_URL)
+    # FRED has used both 'DATE' and 'observation_date' as the date column name.
+    date_col = next((c for c in df.columns if c.lower() in ('date', 'observation_date')), df.columns[0])
+    value_col = next(c for c in df.columns if c != date_col)
+    df[date_col] = pd.to_datetime(df[date_col])
+    df = df.rename(columns={date_col: 'Date', value_col: 'CPI'}).set_index('Date')
+    df['CPI'] = pd.to_numeric(df['CPI'], errors='coerce')
+    df = df.dropna()
+    buffer_start = pd.to_datetime(start) - pd.Timedelta(days=45)
+    return df.loc[df.index >= buffer_start, 'CPI']
+
+
+def _is_inflation_benchmark(name):
+    if not isinstance(name, str):
+        return False
+    return name.strip().upper() in INFLATION_BENCHMARK_KEYS
+
 class PortfolioBacktest:
     def __init__(self, tickers_weights, start_date, end_date, initial_capital=10000, benchmark='SPY', rebalance='Monthly', installment_amount=0, installment_frequency='None'):
         self.tickers_weights = tickers_weights
@@ -28,10 +51,11 @@ class PortfolioBacktest:
         self.bench_prices = pd.Series(dtype=float)
         
     def fetch_data(self):
-        all_tickers = self.tickers + [self.benchmark]
-        # Download data
-        data = yf.download(all_tickers, start=self.start_date, end=self.end_date, progress=False)
-        
+        self.benchmark_is_inflation = _is_inflation_benchmark(self.benchmark)
+        download_tickers = self.tickers if self.benchmark_is_inflation else self.tickers + [self.benchmark]
+
+        data = yf.download(download_tickers, start=self.start_date, end=self.end_date, progress=False)
+
         # yfinance returns hierarchical columns if multiple tickers
         if 'Adj Close' in data.columns.levels[0] if isinstance(data.columns, pd.MultiIndex) else False:
             adj_close = data['Adj Close']
@@ -41,15 +65,26 @@ class PortfolioBacktest:
                  adj_close = data['Close']
             else:
                  adj_close = data
-                 
-        # If it's single ticker + benchmark, it might just be two columns under Adj Close
+
+        # If it's a single ticker, yfinance may return a Series
         if isinstance(adj_close, pd.Series):
-             adj_close = pd.DataFrame(adj_close, columns=[all_tickers[0]])
-             
+             adj_close = pd.DataFrame(adj_close, columns=[download_tickers[0]])
+
         adj_close = adj_close.dropna()
         self.prices = adj_close[self.tickers]
-        self.bench_prices = adj_close[self.benchmark]
-        
+
+        if self.benchmark_is_inflation:
+            # CPI is monthly; align to trading-day index via forward-fill.
+            cpi = _fetch_cpi_series(self.start_date, self.end_date)
+            self.bench_prices = cpi.reindex(self.prices.index.union(cpi.index)).sort_index().ffill()
+            self.bench_prices = self.bench_prices.reindex(self.prices.index).dropna()
+            # Trim prices to dates where CPI is available.
+            self.prices = self.prices.loc[self.bench_prices.index]
+            self.benchmark_label = "Inflation (CPI)"
+        else:
+            self.bench_prices = adj_close[self.benchmark]
+            self.benchmark_label = self.benchmark
+
         if not self.prices.empty:
             actual_start_pd = self.prices.index.min()
             requested_start_pd = pd.to_datetime(self.start_date)
@@ -173,3 +208,54 @@ class PortfolioBacktest:
         var = np.var(self.bench_returns)
         self.beta = cov / var if var > 0 else 1
         self.alpha = self.cagr - (RISK_FREE_RATE + self.beta * (self.bench_cagr - RISK_FREE_RATE))
+
+    def rolling_start_analysis(self, min_window_days=60):
+        """For each candidate start date (1st trading day of each month), compute
+        the CAGR and total return that would have resulted from holding through
+        to self.end_date, using the already-simulated daily strategy returns.
+
+        Note: this treats each start as a lump-sum investment under the same
+        rebalance policy. Installment cash flows are not re-simulated; the
+        daily returns series already excludes cash-flow effects, so this is
+        exact for lump-sum and a close approximation for DCA.
+        """
+        port_rets = self.portfolio_returns
+        bench_rets = self.bench_returns.reindex(port_rets.index).fillna(0)
+
+        if port_rets.empty:
+            return pd.DataFrame(columns=[
+                'Portfolio CAGR', 'Benchmark CAGR',
+                'Portfolio Total Return', 'Benchmark Total Return',
+            ])
+
+        # Use the first trading day of each month as a start candidate.
+        monthly_firsts = port_rets.groupby([port_rets.index.year, port_rets.index.month]).apply(
+            lambda s: s.index.min()
+        ).tolist()
+
+        records = []
+        for start in monthly_firsts:
+            window = port_rets.loc[start:]
+            bwindow = bench_rets.loc[start:]
+            if len(window) < min_window_days:
+                continue
+
+            days = len(window)
+            years = days / 252.0
+
+            p_cum = float((1 + window).prod())
+            b_cum = float((1 + bwindow).prod())
+
+            p_cagr = p_cum ** (1 / years) - 1 if years > 0 else 0.0
+            b_cagr = b_cum ** (1 / years) - 1 if years > 0 else 0.0
+
+            records.append({
+                'start_date': start,
+                'Portfolio CAGR': p_cagr,
+                'Benchmark CAGR': b_cagr,
+                'Portfolio Total Return': p_cum - 1.0,
+                'Benchmark Total Return': b_cum - 1.0,
+                'Years Held': years,
+            })
+
+        return pd.DataFrame(records).set_index('start_date')

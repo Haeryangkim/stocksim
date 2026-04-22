@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+.DS_Store
+
+# Runtime state (persisted via Docker volume mount locally)
+usage_stats.json
+
+# Stray symlinks accidentally created in repo root
+/docker-compose
+/docker-credential-osxkeychain

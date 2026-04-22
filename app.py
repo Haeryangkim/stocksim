@@ -102,7 +102,24 @@ end_date = st.sidebar.date_input("End Date", value=pd.to_datetime('today'), min_
 initial_capital = st.sidebar.number_input("Initial Capital", min_value=1000, value=10000, step=1000, help="포트폴리오에 최초 편입할 자본금입니다. (계산 편의상 달러로 표기됩니다)")
 installment_amount = st.sidebar.number_input("Installment Amount", min_value=0, value=0, step=100, help="적립식으로 매 기간마다 투입할 추가 금액입니다.")
 installment_frequency = st.sidebar.selectbox("Installment Frequency", ["None", "Monthly", "Annually"], help="지정한 적립 투자 금액을 매월 투입할지, 매년 투입할지 결정합니다.")
-benchmark = st.sidebar.text_input("Benchmark Ticker", "SPY", help="내 포트폴리오의 성과와 비교할 기준 지수(시장 평균 등)입니다. 기본값은 미국 S&P 500 ETF(SPY)입니다.")
+BENCHMARK_OPTIONS = {
+    "Inflation (CPI)": "Inflation (CPI)",
+    "SPY (S&P 500)": "SPY",
+    "QQQ (Nasdaq 100)": "QQQ",
+    "VTI (Total US Market)": "VTI",
+    "ACWI (World)": "ACWI",
+    "Custom ticker...": "__CUSTOM__",
+}
+benchmark_choice = st.sidebar.selectbox(
+    "Benchmark",
+    list(BENCHMARK_OPTIONS.keys()),
+    index=0,
+    help="포트폴리오 성과를 비교할 기준입니다. 기본값은 미국 물가(CPI, FRED 데이터). 인덱스 ETF나 직접 입력한 티커와도 비교할 수 있습니다.",
+)
+if BENCHMARK_OPTIONS[benchmark_choice] == "__CUSTOM__":
+    benchmark = st.sidebar.text_input("Custom Benchmark Ticker", "SPY")
+else:
+    benchmark = BENCHMARK_OPTIONS[benchmark_choice]
 
 if len(tickers) != len(weights):
     st.sidebar.error("Number of tickers and weights must match.")
@@ -155,12 +172,15 @@ else:
             st.header("2. Performance & Returns", help="투자 기간 동안 포트폴리오 가치와 벤치마크(기준 시장) 가치의 누적 상승 추이를 시각적인 그래프로 비교합니다.")
             
             # Growth Chart
+            bench_label = getattr(bt, 'benchmark_label', benchmark)
             st.subheader("Portfolio Growth")
             growth_df = pd.DataFrame({
                 'Portfolio': bt.portfolio_value,
-                'Benchmark': bt.bench_value
+                f'Benchmark ({bench_label})': bt.bench_value
             })
             st.line_chart(growth_df)
+            if getattr(bt, 'benchmark_is_inflation', False):
+                st.caption("벤치마크가 물가(CPI)이므로 '벤치마크'는 동일 원금을 물가상승률로만 불렸을 때의 가상 잔고입니다. 포트폴리오가 이 선을 넘으면 실질 수익(real return)이 (+)입니다.")
             
             # --- Risk & Return Metrics ---
             st.header("3. Risk & Return Metrics")
@@ -172,12 +192,21 @@ else:
             * **Beta** (베타): 시장(벤치마크)의 움직임에 얼마나 민감하게 반응하는지를 수치화한 것입니다. 1보다 크면 시장보다 변동이 크다는 뜻입니다.
             * **Alpha** (알파): 벤치마크 대비 포트폴리오의 실질적인 초과 수익률입니다. 높을수록 좋습니다.
             """)
+            if getattr(bt, 'benchmark_is_inflation', False):
+                beta_port, alpha_port = "N/A", "N/A"
+                beta_help = "벤치마크가 CPI(물가)라 시장 민감도 지표인 Beta/Alpha는 의미가 없어 표시하지 않습니다."
+            else:
+                beta_port, alpha_port = f"{bt.beta:.2f}", f"{bt.alpha:.2%}"
+                beta_help = None
+
             metrics_df = pd.DataFrame({
                 'Metric': ['CAGR', 'Daily Volatility (Ann.)', 'Sharpe Ratio', 'Max Drawdown', 'Beta', 'Alpha'],
-                'Portfolio': [f"{bt.cagr:.2%}", f"{bt.volatility:.2%}", f"{bt.sharpe:.2f}", f"{bt.max_drawdown:.2%}", f"{bt.beta:.2f}", f"{bt.alpha:.2%}"],
-                'Benchmark': [f"{bt.bench_cagr:.2%}", f"{bt.bench_volatility:.2%}", f"{bt.bench_sharpe:.2f}", f"{bt.bench_max_drawdown:.2%}", "1.00", "0.00%"]
+                'Portfolio': [f"{bt.cagr:.2%}", f"{bt.volatility:.2%}", f"{bt.sharpe:.2f}", f"{bt.max_drawdown:.2%}", beta_port, alpha_port],
+                f'Benchmark ({bench_label})': [f"{bt.bench_cagr:.2%}", f"{bt.bench_volatility:.2%}", f"{bt.bench_sharpe:.2f}", f"{bt.bench_max_drawdown:.2%}", "1.00", "0.00%"]
             })
             st.table(metrics_df.set_index('Metric'))
+            if beta_help:
+                st.caption(beta_help)
             
             # --- Drawdowns Analysis ---
             st.header("4. Drawdowns Analysis", help="직전 최고점(전고점) 대비 자산이 얼마나 하락했는지(손실폭)를 보여주는 낙폭 차트입니다. 그래프가 아래로 패인 구간이 경제 위기나 하락장 구간입니다.")
@@ -189,12 +218,77 @@ else:
             
             dd_df = pd.DataFrame({
                 'Portfolio Drawdown (%)': port_drawdown,
-                'Benchmark Drawdown (%)': bench_drawdown
+                f'Benchmark ({bench_label}) Drawdown (%)': bench_drawdown
             })
             st.line_chart(dd_df)
-            
+
+            # --- Start-Date Sensitivity ---
+            st.header(
+                "5. Start-Date Sensitivity",
+                help="'언제 투자를 시작했느냐'에 따라 현재(종료일)까지의 수익률이 얼마나 달라지는지를 보여줍니다. 각 월초를 가상의 시작 시점으로 삼아 종료일까지의 CAGR/총수익률을 계산해 선으로 잇습니다. 선이 가파르면 타이밍 민감도가 크고, 평평하면 둔감합니다.",
+            )
+            try:
+                sensitivity = bt.rolling_start_analysis()
+            except Exception as e:
+                sensitivity = None
+                st.info(f"Start-date sensitivity 계산 중 오류: {e}")
+
+            if sensitivity is not None and not sensitivity.empty:
+                metric_choice = st.radio(
+                    "Metric",
+                    ["CAGR (연평균 수익률)", "Total Return (총 수익률)"],
+                    index=0,
+                    horizontal=True,
+                    key="sensitivity_metric",
+                )
+                if metric_choice.startswith("CAGR"):
+                    plot_df = sensitivity[['Portfolio CAGR', 'Benchmark CAGR']].rename(
+                        columns={'Benchmark CAGR': f'Benchmark CAGR ({bench_label})'}
+                    )
+                else:
+                    plot_df = sensitivity[['Portfolio Total Return', 'Benchmark Total Return']].rename(
+                        columns={'Benchmark Total Return': f'Benchmark Total Return ({bench_label})'}
+                    )
+                st.line_chart(plot_df)
+
+                st.caption(
+                    f"각 X축 지점은 '이 날 투자를 시작했다면' 의 가상 시작일이며, 종료일({end_date})까지의 성과를 의미합니다. "
+                    "포트폴리오 전략(비중/리밸런싱)은 동일하게 유지되고 시작 시점만 달라집니다."
+                )
+
+                # Summary stats
+                best = sensitivity['Portfolio CAGR'].idxmax()
+                worst = sensitivity['Portfolio CAGR'].idxmin()
+                colA, colB, colC = st.columns(3)
+                colA.metric(
+                    "Best Start (CAGR)",
+                    best.strftime('%Y-%m-%d'),
+                    f"{sensitivity.loc[best, 'Portfolio CAGR']:.2%}",
+                )
+                colB.metric(
+                    "Worst Start (CAGR)",
+                    worst.strftime('%Y-%m-%d'),
+                    f"{sensitivity.loc[worst, 'Portfolio CAGR']:.2%}",
+                )
+                colC.metric(
+                    "Median Start CAGR",
+                    "—",
+                    f"{sensitivity['Portfolio CAGR'].median():.2%}",
+                )
+
+                with st.expander("Raw data (start date × return)"):
+                    display_df = sensitivity.copy()
+                    display_df['Portfolio CAGR'] = display_df['Portfolio CAGR'].map(lambda x: f"{x:.2%}")
+                    display_df['Benchmark CAGR'] = display_df['Benchmark CAGR'].map(lambda x: f"{x:.2%}")
+                    display_df['Portfolio Total Return'] = display_df['Portfolio Total Return'].map(lambda x: f"{x:.2%}")
+                    display_df['Benchmark Total Return'] = display_df['Benchmark Total Return'].map(lambda x: f"{x:.2%}")
+                    display_df['Years Held'] = display_df['Years Held'].map(lambda x: f"{x:.2f}")
+                    st.dataframe(display_df)
+            else:
+                st.info("데이터 기간이 너무 짧아 시작일별 민감도를 계산할 수 없습니다.")
+
             # --- Asset Level ---
-            st.header("5. Asset-Level Analysis", help="포트폴리오 구성 자산들의 일간 수익률 상관관계를 색상으로 표기한 히트맵입니다. 상관계수가 음수(파란색)이거나 낮은 자산끼리 섞이면 위험 분산(헤지) 효과가 커집니다.")
+            st.header("6. Asset-Level Analysis", help="포트폴리오 구성 자산들의 일간 수익률 상관관계를 색상으로 표기한 히트맵입니다. 상관계수가 음수(파란색)이거나 낮은 자산끼리 섞이면 위험 분산(헤지) 효과가 커집니다.")
             st.subheader("Asset Correlations (Daily Returns)")
             returns = bt.prices.pct_change().dropna()
             corr = returns.corr()
