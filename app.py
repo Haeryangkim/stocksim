@@ -140,6 +140,7 @@ else:
                     st.write(f"- **Total Invested:** ${bt.invested_capitals.iloc[-1]:,.2f}")
                 st.write(f"- **Final Balance:** ${bt.portfolio_value.iloc[-1]:,.2f}")
                 st.write(f"- **Total Profit:** ${bt.portfolio_value.iloc[-1] - bt.invested_capitals.iloc[-1]:,.2f}")
+                st.write(f"- **Total Return (ROI):** {(bt.portfolio_value.iloc[-1] / bt.invested_capitals.iloc[-1] - 1)*100:.2f}%")
                 st.write(f"- **Rebalancing:** {rebalance}")
                 if bt.installment_amount > 0 and bt.installment_frequency != 'None':
                     st.write(f"- **Installment:** ${bt.installment_amount:,.2f} ({bt.installment_frequency})")
@@ -180,11 +181,11 @@ else:
             
             # --- Drawdowns Analysis ---
             st.header("4. Drawdowns Analysis", help="직전 최고점(전고점) 대비 자산이 얼마나 하락했는지(손실폭)를 보여주는 낙폭 차트입니다. 그래프가 아래로 패인 구간이 경제 위기나 하락장 구간입니다.")
-            port_cummax = bt.portfolio_value.cummax()
-            port_drawdown = (bt.portfolio_value / port_cummax - 1.0) * 100
+            port_cummax = bt.cumulative_returns.cummax()
+            port_drawdown = (bt.cumulative_returns / port_cummax - 1.0) * 100
             
-            bench_cummax = bt.bench_value.cummax()
-            bench_drawdown = (bt.bench_value / bench_cummax - 1.0) * 100
+            bench_cummax = bt.bench_cumulative.cummax()
+            bench_drawdown = (bt.bench_cumulative / bench_cummax - 1.0) * 100
             
             dd_df = pd.DataFrame({
                 'Portfolio Drawdown (%)': port_drawdown,

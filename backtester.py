@@ -69,16 +69,19 @@ class PortfolioBacktest:
         
         returns, self.bench_returns = returns.align(self.bench_returns, join='inner', axis=0)
         
-        daily_returns = []
-        current_weights = self.weights.copy()
-        
-        current_dollar_value = self.initial_capital
+        asset_dollars = self.initial_capital * self.weights
         bench_dollar_value = self.initial_capital
         invested_capital = self.initial_capital
         
         portfolio_dollar_values = []
         bench_values = []
         invested_capitals = []
+        
+        daily_returns_dollar = []
+        bench_returns_dollar = []
+        
+        prev_portfolio_value = self.initial_capital
+        prev_bench_value = self.initial_capital
         
         dates = returns.index
         for i, (date, daily_ret) in enumerate(returns.iterrows()):
@@ -100,35 +103,41 @@ class PortfolioBacktest:
                 elif self.installment_frequency == 'Annually' and year_changed:
                     is_installment = True
             
-            if is_rebalance:
-                current_weights = self.weights.copy()
-            
-            port_ret = np.dot(current_weights, daily_ret.values)
-            daily_returns.append(port_ret)
-            
-            # Compound the dollar value BEFORE the end-of-period installment is added
-            current_dollar_value = current_dollar_value * (1 + port_ret)
+            # 1. Market moves
+            asset_dollars = asset_dollars * (1 + daily_ret.values)
             bench_dollar_value = bench_dollar_value * (1 + self.bench_returns.iloc[i])
             
+            curr_portfolio_value = np.sum(asset_dollars)
+            
+            # 2. Daily returns based on dollars (before any cash flow for the day)
+            port_ret = (curr_portfolio_value / prev_portfolio_value) - 1.0 if prev_portfolio_value > 0 else 0
+            bench_ret = (bench_dollar_value / prev_bench_value) - 1.0 if prev_bench_value > 0 else 0
+            
+            daily_returns_dollar.append(port_ret)
+            bench_returns_dollar.append(bench_ret)
+            
+            # 3. Actions (Rebalance & Installment applied End-of-Day)
+            if is_rebalance:
+                asset_dollars = curr_portfolio_value * self.weights
+                
             if is_installment:
-                current_dollar_value += self.installment_amount
+                asset_dollars += self.installment_amount * self.weights
                 bench_dollar_value += self.installment_amount
                 invested_capital += self.installment_amount
+                curr_portfolio_value += self.installment_amount
             
-            portfolio_dollar_values.append(current_dollar_value)
+            portfolio_dollar_values.append(curr_portfolio_value)
             bench_values.append(bench_dollar_value)
             invested_capitals.append(invested_capital)
             
-            current_weights = current_weights * (1 + daily_ret.values)
-            sum_weights = np.sum(current_weights)
-            if sum_weights > 0:
-                current_weights = current_weights / sum_weights
+            prev_portfolio_value = curr_portfolio_value
+            prev_bench_value = bench_dollar_value
             
-        self.portfolio_returns = pd.Series(daily_returns, index=returns.index)
+        self.portfolio_returns = pd.Series(daily_returns_dollar, index=returns.index)
         self.cumulative_returns = (1 + self.portfolio_returns).cumprod()
         self.portfolio_value = pd.Series(portfolio_dollar_values, index=returns.index)
         
-        self.bench_cumulative = (1 + self.bench_returns).cumprod()
+        self.bench_cumulative = (1 + pd.Series(bench_returns_dollar, index=returns.index)).cumprod()
         self.bench_value = pd.Series(bench_values, index=returns.index)
         self.invested_capitals = pd.Series(invested_capitals, index=returns.index)
         
