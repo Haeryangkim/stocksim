@@ -31,6 +31,36 @@ def _is_inflation_benchmark(name):
         return False
     return name.strip().upper() in INFLATION_BENCHMARK_KEYS
 
+
+def _extract_close_prices(data, tickers):
+    """Return a DataFrame of per-ticker close prices, tolerant of yfinance's
+    shifting column conventions across versions (Price,Ticker vs Ticker,Price,
+    'Adj Close' vs 'Close', single-ticker Series vs DataFrame)."""
+    if isinstance(data, pd.Series):
+        return data.to_frame(name=tickers[0])
+
+    if isinstance(data.columns, pd.MultiIndex):
+        level0 = list(data.columns.get_level_values(0).unique())
+        level1 = list(data.columns.get_level_values(1).unique())
+        for field in ('Adj Close', 'Close'):
+            if field in level0:
+                return data[field].copy()
+            if field in level1:
+                return data.xs(field, axis=1, level=1).copy()
+        raise ValueError(
+            f"Could not locate 'Close' prices in downloaded data. "
+            f"Columns seen: level0={level0}, level1={level1}"
+        )
+
+    # Flat columns: typical for a single-ticker download.
+    for field in ('Adj Close', 'Close'):
+        if field in data.columns:
+            return data[[field]].rename(columns={field: tickers[0]})
+    # Already ticker-keyed columns.
+    if all(t in data.columns for t in tickers):
+        return data[tickers].copy()
+    raise ValueError(f"Unrecognized yfinance column layout: {list(data.columns)}")
+
 class PortfolioBacktest:
     def __init__(self, tickers_weights, start_date, end_date, initial_capital=10000, benchmark='SPY', rebalance='Monthly', installment_amount=0, installment_frequency='None'):
         self.tickers_weights = tickers_weights
@@ -54,21 +84,24 @@ class PortfolioBacktest:
         self.benchmark_is_inflation = _is_inflation_benchmark(self.benchmark)
         download_tickers = self.tickers if self.benchmark_is_inflation else self.tickers + [self.benchmark]
 
-        data = yf.download(download_tickers, start=self.start_date, end=self.end_date, progress=False)
+        data = yf.download(
+            download_tickers,
+            start=self.start_date,
+            end=self.end_date,
+            progress=False,
+            auto_adjust=True,
+            group_by='column',
+        )
 
-        # yfinance returns hierarchical columns if multiple tickers
-        if 'Adj Close' in data.columns.levels[0] if isinstance(data.columns, pd.MultiIndex) else False:
-            adj_close = data['Adj Close']
-        else:
-            # If yfinance structure changes or it's just 'Close'
-            if 'Close' in data.columns.levels[0] if isinstance(data.columns, pd.MultiIndex) else False:
-                 adj_close = data['Close']
-            else:
-                 adj_close = data
+        adj_close = _extract_close_prices(data, download_tickers)
+        adj_close = adj_close.dropna(how='all')
 
-        # If it's a single ticker, yfinance may return a Series
-        if isinstance(adj_close, pd.Series):
-             adj_close = pd.DataFrame(adj_close, columns=[download_tickers[0]])
+        missing = [t for t in download_tickers if t not in adj_close.columns]
+        if missing:
+            raise ValueError(
+                f"Could not fetch price data for: {missing}. "
+                "Check the ticker symbols and your date range."
+            )
 
         adj_close = adj_close.dropna()
         self.prices = adj_close[self.tickers]
