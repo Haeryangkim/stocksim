@@ -137,7 +137,7 @@ else:
             * **CAGR** (Compound Annual Growth Rate): 투자 기간 동안의 연평균 복리 수익률입니다.
             * **Daily Volatility (Ann.)** (연환산 변동성): 포트폴리오 수익률이 얼마나 출렁이는지를 나타내는 위험 지표입니다. 낮을수록 안정적입니다.
             * **Sharpe Ratio** (샤프 지수): 1단위 위험을 감수할 때 얻을 수 있는 초과 수익률입니다. 높을수록 좋습니다.
-            * **Max Drawdown** (MDD, 최대 낙폭): 고점 대비 최대로 하락한 비율을 의미하며, 해당 포트폴리오의 가장 큰 손실 위험을 나타냅니다.
+            * **Max Drawdown** (MDD, 최대 낙폭): 직전 최고점(전고점) 대비 최대로 하락한 비율을 의미하며, 해당 포트폴리오의 가장 큰 손실 위험을 나타냅니다.
             * **Beta** (베타): 시장(벤치마크)의 움직임에 얼마나 민감하게 반응하는지를 수치화한 것입니다. 1보다 크면 시장보다 변동이 크다는 뜻입니다.
             * **Alpha** (알파): 벤치마크 대비 포트폴리오의 실질적인 초과 수익률입니다. 높을수록 좋습니다.
             """)
@@ -149,7 +149,7 @@ else:
             st.table(metrics_df.set_index('Metric'))
             
             # --- Drawdowns Analysis ---
-            st.header("4. Drawdowns Analysis", help="역대 최고점 대비 자산이 얼마나 하락했는지(손실폭)를 보여주는 낙폭 차트입니다. 그래프가 아래로 패인 구간이 경제 위기나 하락장 구간입니다.")
+            st.header("4. Drawdowns Analysis", help="직전 최고점(전고점) 대비 자산이 얼마나 하락했는지(손실폭)를 보여주는 낙폭 차트입니다. 그래프가 아래로 패인 구간이 경제 위기나 하락장 구간입니다.")
             port_cummax = bt.portfolio_value.cummax()
             port_drawdown = (bt.portfolio_value / port_cummax - 1.0) * 100
             
