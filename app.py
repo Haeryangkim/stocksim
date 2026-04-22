@@ -5,10 +5,37 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from backtester import PortfolioBacktest
 import warnings
+import os
+import json
 
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="Stock Portfolio Backtester", layout="wide")
+
+STATS_FILE = "usage_stats.json"
+
+def load_stats():
+    if os.path.exists(STATS_FILE):
+        try:
+            with open(STATS_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {"page_views": 0, "executions": 0}
+
+def save_stats(stats):
+    try:
+        with open(STATS_FILE, "w") as f:
+            json.dump(stats, f)
+    except:
+        pass
+
+if 'visited' not in st.session_state:
+    st.session_state.visited = True
+    stats = load_stats()
+    stats["page_views"] += 1
+    save_stats(stats)
+
 
 @st.cache_data
 def load_krx_tickers():
@@ -95,6 +122,9 @@ else:
                 success = False
                 
         if success:
+            stats = load_stats()
+            stats["executions"] += 1
+            save_stats(stats)
             st.success("Backtest complete!")
             
             if hasattr(bt, 'start_date_adjusted') and bt.start_date_adjusted:
@@ -171,3 +201,8 @@ else:
             fig, ax = plt.subplots(figsize=(6, 4))
             sns.heatmap(corr, annot=True, cmap="coolwarm", vmin=-1, vmax=1, ax=ax)
             st.pyplot(fig)
+
+# Display usage stats in sidebar
+current_stats = load_stats()
+st.sidebar.markdown("---")
+st.sidebar.caption(f"👁️ 일일/누적 접속: {current_stats.get('page_views', 0)} | 🚀 백테스트 실행: {current_stats.get('executions', 0)}")
