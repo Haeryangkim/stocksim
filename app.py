@@ -21,7 +21,7 @@ def load_stats():
                 return json.load(f)
         except:
             pass
-    return {"page_views": 0, "executions": 0}
+    return {"page_views": 0, "executions": 0, "likes": 0}
 
 def save_stats(stats):
     try:
@@ -301,3 +301,14 @@ else:
 current_stats = load_stats()
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Total Views: {current_stats.get('page_views', 0)} | Total Executions: {current_stats.get('executions', 0)}")
+
+# Like button
+already_liked = st.session_state.get('liked', False)
+like_count = current_stats.get('likes', 0)
+like_label = f"👍 Liked  ·  {like_count}" if already_liked else f"👍 Like  ·  {like_count}"
+if st.sidebar.button(like_label, disabled=already_liked, use_container_width=True, help="이 페이지가 마음에 들면 눌러주세요. 같은 세션에서는 한 번만 카운트됩니다."):
+    st.session_state.liked = True
+    fresh = load_stats()
+    fresh['likes'] = fresh.get('likes', 0) + 1
+    save_stats(fresh)
+    st.rerun()
