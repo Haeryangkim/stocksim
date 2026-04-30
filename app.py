@@ -177,13 +177,12 @@ else:
             # Growth Chart
             bench_label = getattr(bt, 'benchmark_label', benchmark)
             st.subheader("Portfolio Growth")
-            fig, ax = plt.subplots(figsize=(10, 5))
-            ax.plot(bt.portfolio_value.index, bt.portfolio_value, label='Portfolio', color='#1f77b4', linewidth=1.5)
-            ax.plot(bt.bench_value.index, bt.bench_value, label=f'Benchmark ({bench_label})', color='#7f7f7f', alpha=0.7, linewidth=1.5)
-            ax.set_ylabel('Value ($)')
-            ax.grid(True, linestyle='--', alpha=0.5)
-            ax.legend()
-            st.pyplot(fig)
+            growth_df = pd.DataFrame({
+                'Portfolio': bt.portfolio_value,
+                f'Benchmark ({bench_label})': bt.bench_value
+            })
+            st.line_chart(growth_df.resample('W').last())
+            st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
             if getattr(bt, 'benchmark_is_inflation', False):
                 st.caption("벤치마크가 물가(CPI)이므로 '벤치마크'는 동일 원금을 물가상승률로만 불렸을 때의 가상 잔고입니다. 포트폴리오가 이 선을 넘으면 실질 수익(real return)이 (+)입니다.")
             
@@ -221,14 +220,12 @@ else:
             bench_cummax = bt.bench_cumulative.cummax()
             bench_drawdown = (bt.bench_cumulative / bench_cummax - 1.0) * 100
             
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(port_drawdown.index, port_drawdown, label='Portfolio', color='#d62728', linewidth=1)
-            ax.plot(bench_drawdown.index, bench_drawdown, label=f'Benchmark ({bench_label})', color='#7f7f7f', alpha=0.5, linewidth=1)
-            ax.fill_between(port_drawdown.index, port_drawdown, 0, color='#d62728', alpha=0.1)
-            ax.set_ylabel('Drawdown (%)')
-            ax.grid(True, linestyle='--', alpha=0.5)
-            ax.legend()
-            st.pyplot(fig)
+            dd_df = pd.DataFrame({
+                'Portfolio Drawdown (%)': port_drawdown,
+                f'Benchmark ({bench_label}) Drawdown (%)': bench_drawdown
+            })
+            st.line_chart(dd_df.resample('W').last())
+            st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
 
             # --- Start-Date Sensitivity ---
             st.header(
@@ -257,14 +254,8 @@ else:
                     plot_df = sensitivity[['Portfolio Total Return', 'Benchmark Total Return']].rename(
                         columns={'Benchmark Total Return': f'Benchmark Total Return ({bench_label})'}
                     )
-                fig, ax = plt.subplots(figsize=(10, 5))
-                colors = ['#1f77b4', '#7f7f7f']
-                for i, col in enumerate(plot_df.columns):
-                    ax.plot(plot_df.index, plot_df[col], label=col, color=colors[i], alpha=0.8 if i==1 else 1.0, linewidth=1.5)
-                ax.set_ylabel('Metric Value')
-                ax.grid(True, linestyle='--', alpha=0.5)
-                ax.legend()
-                st.pyplot(fig)
+                st.line_chart(plot_df)
+                st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
 
                 st.caption(
                     f"각 X축 지점은 '이 날 투자를 시작했다면' 의 가상 시작일이며, 종료일({end_date})까지의 성과를 의미합니다. "
