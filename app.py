@@ -88,7 +88,7 @@ if not df_krx.empty:
 
 # Dynamic inputs for tickers and weights
 st.sidebar.subheader("Assets")
-tickers_input = st.sidebar.text_input("Tickers (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["tickers"], help="투자할 종목의 티커를 쉼표(,)로 구분해서 적어주세요. (예금/파킹통장 이율을 반영하려면 BIL(미국 달러 예금 ETF)이나 357870.KS(원화 CD금리 ETF)를 편입하세요.)")
+tickers_input = st.sidebar.text_input("Tickers (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["tickers"], help="투자할 종목의 티커를 쉼표(,)로 구분해서 적어주세요. (예금/파킹통장 이율을 반영하려면 BIL(미국 달러 예금 ETF)이나 153130.KS(원화 단기채/예금 ETF)를 편입하세요.)")
 weights_input = st.sidebar.text_input("Weights (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["weights"], help="티커 순서에 맞춰 목표 투자 비중(%)을 쉼표로 적어주세요. 총합이 항상 100이어야 합니다.")
 
 tickers = [t.strip() for t in tickers_input.split(",")]
@@ -106,7 +106,7 @@ installment_frequency = st.sidebar.selectbox("Installment Frequency", ["None", "
 BENCHMARK_OPTIONS = {
     "Inflation (CPI)": "Inflation (CPI)",
     "BIL (US Cash/Deposit/Fed Rate)": "BIL",
-    "357870.KS (KRW CD/Deposit)": "357870.KS",
+    "153130.KS (KRW Short-Term Bond/Deposit)": "153130.KS",
     "SPY (S&P 500)": "SPY",
     "QQQ (Nasdaq 100)": "QQQ",
     "VTI (Total US Market)": "VTI",
