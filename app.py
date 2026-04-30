@@ -60,6 +60,7 @@ st.sidebar.header("Portfolio Configuration")
 
 PREDEFINED_PORTFOLIOS = {
     "Custom": {"tickers": "AAPL, TLT, SPY", "weights": "40, 40, 20"},
+    "100% Cash/Deposit (USD)": {"tickers": "BIL", "weights": "100"},
     "Comprehensive Optimized (2004+)": {"tickers": "QQQ, GLD, SHY, IEF, DVY, TLT", "weights": "24.8, 36.9, 28.1, 4.9, 2.7, 2.6"},
     "Low Drawdown Growth (1990+)": {"tickers": "QQQ, TLT, GLD, VTI", "weights": "30, 45, 10, 15"},
     "60/40 Portfolio (Stocks/Bonds)": {"tickers": "SPY, TLT", "weights": "60, 40"},
@@ -87,7 +88,7 @@ if not df_krx.empty:
 
 # Dynamic inputs for tickers and weights
 st.sidebar.subheader("Assets")
-tickers_input = st.sidebar.text_input("Tickers (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["tickers"], help="투자할 종목의 티커를 쉼표(,)로 구분해서 적어주세요. (예: AAPL, SPY, 005930.KS)")
+tickers_input = st.sidebar.text_input("Tickers (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["tickers"], help="투자할 종목의 티커를 쉼표(,)로 구분해서 적어주세요. (예금/파킹통장 이율을 반영하려면 BIL(미국 달러 예금 ETF)이나 357870.KS(원화 CD금리 ETF)를 편입하세요.)")
 weights_input = st.sidebar.text_input("Weights (comma separated)", PREDEFINED_PORTFOLIOS[selected_strategy]["weights"], help="티커 순서에 맞춰 목표 투자 비중(%)을 쉼표로 적어주세요. 총합이 항상 100이어야 합니다.")
 
 tickers = [t.strip() for t in tickers_input.split(",")]
@@ -104,6 +105,8 @@ installment_amount = st.sidebar.number_input("Installment Amount", min_value=0, 
 installment_frequency = st.sidebar.selectbox("Installment Frequency", ["None", "Monthly", "Annually"], help="지정한 적립 투자 금액을 매월 투입할지, 매년 투입할지 결정합니다.")
 BENCHMARK_OPTIONS = {
     "Inflation (CPI)": "Inflation (CPI)",
+    "BIL (US Cash/Deposit/Fed Rate)": "BIL",
+    "357870.KS (KRW CD/Deposit)": "357870.KS",
     "SPY (S&P 500)": "SPY",
     "QQQ (Nasdaq 100)": "QQQ",
     "VTI (Total US Market)": "VTI",
