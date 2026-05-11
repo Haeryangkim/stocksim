@@ -2,6 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import scipy.stats as stats
+from scipy.optimize import brentq
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -190,9 +191,10 @@ class PortfolioBacktest:
                 
             if is_installment:
                 asset_dollars += self.installment_amount * self.weights
-                bench_dollar_value += self.installment_amount
                 invested_capital += self.installment_amount
                 curr_portfolio_value += self.installment_amount
+                # Benchmark intentionally does NOT receive installments: it
+                # represents pure market growth on the initial capital.
             
             portfolio_dollar_values.append(curr_portfolio_value)
             bench_values.append(bench_dollar_value)
@@ -212,10 +214,13 @@ class PortfolioBacktest:
         self.calculate_metrics()
         
     def calculate_metrics(self):
-        days = len(self.portfolio_returns)
-        years = days / 252.0 if days > 0 else 1
-        
-        # CAGR
+        # Annualize CAGR over calendar time (so it lines up with IRR/MWR and
+        # matches industry convention). Volatility/Sharpe keep their √252
+        # trading-day annualization, which is statistical not temporal.
+        idx = self.portfolio_returns.index
+        calendar_days = max((idx[-1] - idx[0]).days, 1) if len(idx) > 1 else 1
+        years = calendar_days / 365.25
+
         self.cagr = self.cumulative_returns.iloc[-1] ** (1 / years) - 1
         self.bench_cagr = self.bench_cumulative.iloc[-1] ** (1 / years) - 1
         
@@ -236,11 +241,53 @@ class PortfolioBacktest:
         bench_drawdowns = self.bench_cumulative / bench_roll_max - 1.0
         self.bench_max_drawdown = bench_drawdowns.min()
         
-        # Beta & Alpha
-        cov = np.cov(self.portfolio_returns, self.bench_returns)[0][1]
-        var = np.var(self.bench_returns)
+        # Beta & Alpha — use consistent sample statistics (ddof=1) for both
+        # covariance and variance; mixing np.cov (ddof=1) with np.var (ddof=0)
+        # biased beta high by a factor of N/(N-1).
+        cov = np.cov(self.portfolio_returns, self.bench_returns, ddof=1)[0][1]
+        var = np.var(self.bench_returns, ddof=1)
         self.beta = cov / var if var > 0 else 1
         self.alpha = self.cagr - (RISK_FREE_RATE + self.beta * (self.bench_cagr - RISK_FREE_RATE))
+
+        # Money-weighted return (IRR) — meaningful when cash flows (installments)
+        # exist; otherwise it equals the TWR CAGR by construction.
+        self.mwr = self._compute_mwr()
+
+    def _compute_mwr(self):
+        """Internal rate of return on the actual cash-flow schedule.
+
+        Returns the annualized rate r such that the NPV of all contributions
+        (negative) and the terminal portfolio value (positive) is zero.
+        For a pure lump-sum investment this equals the TWR CAGR.
+        """
+        if self.portfolio_value.empty:
+            return float('nan')
+
+        dates = self.portfolio_returns.index
+        invested = self.invested_capitals
+
+        cash_flow_dates = [dates[0]]
+        cash_flow_amts = [-float(self.initial_capital)]
+        for i in range(1, len(dates)):
+            diff = float(invested.iloc[i] - invested.iloc[i - 1])
+            if diff > 0:
+                cash_flow_dates.append(dates[i])
+                cash_flow_amts.append(-diff)
+        cash_flow_dates.append(dates[-1])
+        cash_flow_amts.append(float(self.portfolio_value.iloc[-1]))
+
+        t0 = cash_flow_dates[0]
+        times = np.array([(d - t0).days / 365.25 for d in cash_flow_dates])
+        amts = np.array(cash_flow_amts)
+
+        def npv(r):
+            return float(np.sum(amts / (1.0 + r) ** times))
+
+        # If the final value can't even cover invested capital, IRR < 0.
+        try:
+            return brentq(npv, -0.999, 10.0, maxiter=200, xtol=1e-8)
+        except (ValueError, RuntimeError):
+            return float('nan')
 
     def rolling_start_analysis(self, min_window_days=60):
         """For each candidate start date (1st trading day of each month), compute
@@ -274,7 +321,8 @@ class PortfolioBacktest:
                 continue
 
             days = len(window)
-            years = days / 252.0
+            calendar_days = max((window.index[-1] - window.index[0]).days, 1)
+            years = calendar_days / 365.25
 
             p_cum = float((1 + window).prod())
             b_cum = float((1 + bwindow).prod())

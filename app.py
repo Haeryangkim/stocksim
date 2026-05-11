@@ -152,17 +152,18 @@ else:
             
             # --- Overview & Allocation ---
             st.header("1. Portfolio Overview & Allocation", help="백테스트의 최종 자산 평가 금액, 누적 원금, 순수익 요약과 포트폴리오의 비중 파이를 보여줍니다.")
+            is_dca = bt.installment_amount > 0 and bt.installment_frequency != 'None'
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**Investment Parameters**")
                 st.write(f"- **Initial Balance:** ${bt.initial_capital:,.2f}")
-                if bt.installment_amount > 0 and bt.installment_frequency != 'None':
+                if is_dca:
                     st.write(f"- **Total Invested:** ${bt.invested_capitals.iloc[-1]:,.2f}")
                 st.write(f"- **Final Balance:** ${bt.portfolio_value.iloc[-1]:,.2f}")
                 st.write(f"- **Total Profit:** ${bt.portfolio_value.iloc[-1] - bt.invested_capitals.iloc[-1]:,.2f}")
                 st.write(f"- **Total Return (ROI):** {(bt.portfolio_value.iloc[-1] / bt.invested_capitals.iloc[-1] - 1)*100:.2f}%")
                 st.write(f"- **Rebalancing:** {rebalance}")
-                if bt.installment_amount > 0 and bt.installment_frequency != 'None':
+                if is_dca:
                     st.write(f"- **Installment:** ${bt.installment_amount:,.2f} ({bt.installment_frequency})")
                 st.write(f"- **Time Period:** {start_date} to {end_date}")
             with col2:
@@ -183,13 +184,21 @@ else:
             })
             st.line_chart(growth_df.resample('W').last())
             st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
+            if is_dca:
+                st.caption(
+                    "ℹ️ 적립식 모드에서 **벤치마크 선은 초기 자본만 시장에 lump-sum 투자한 경우의 가상 잔고**입니다 "
+                    "(벤치마크에는 추가 적립이 적용되지 않음 — '시장은 적립식으로 사주지 않는다'). "
+                    "포트폴리오 선은 초기 자본 + 적립금이 모두 반영된 실제 잔고이므로, 두 선의 절대 금액을 단순 비교하기보다는 "
+                    "아래 **CAGR(TWR)** 으로 전략의 시간가중 수익률을, **MWR(IRR)** 로 실제 투입 자금에 대한 연환산 수익률을 비교하세요."
+                )
             if getattr(bt, 'benchmark_is_inflation', False):
                 st.caption("벤치마크가 물가(CPI)이므로 '벤치마크'는 동일 원금을 물가상승률로만 불렸을 때의 가상 잔고입니다. 포트폴리오가 이 선을 넘으면 실질 수익(real return)이 (+)입니다.")
             
             # --- Risk & Return Metrics ---
             st.header("3. Risk & Return Metrics")
             st.markdown("""
-            * **CAGR** (Compound Annual Growth Rate): 투자 기간 동안의 연평균 복리 수익률입니다.
+            * **CAGR (TWR)** (Compound Annual Growth Rate, Time-Weighted): 전략 자체의 연평균 복리 수익률입니다. 현금 흐름(적립/인출)의 영향을 제외하고, 시장에서 전략이 얼마나 잘 굴러갔는지를 봅니다.
+            * **CAGR (MWR / IRR)** (Money-Weighted Return): 실제로 투입한 자금의 시점까지 고려한 연환산 내부수익률. lump-sum이면 TWR과 같지만, **적립식에선 같지 않습니다** (뒤늦게 들어온 돈은 복리 기간이 짧으니까요).
             * **Daily Volatility (Ann.)** (연환산 변동성): 포트폴리오 수익률이 얼마나 출렁이는지를 나타내는 위험 지표입니다. 낮을수록 안정적입니다.
             * **Sharpe Ratio** (샤프 지수): 1단위 위험을 감수할 때 얻을 수 있는 초과 수익률입니다. 높을수록 좋습니다.
             * **Max Drawdown** (MDD, 최대 낙폭): 직전 최고점(전고점) 대비 최대로 하락한 비율을 의미하며, 해당 포트폴리오의 가장 큰 손실 위험을 나타냅니다.
@@ -203,12 +212,33 @@ else:
                 beta_port, alpha_port = f"{bt.beta:.2f}", f"{bt.alpha:.2%}"
                 beta_help = None
 
+            metric_rows = ['CAGR (TWR)']
+            port_vals = [f"{bt.cagr:.2%}"]
+            bench_vals = [f"{bt.bench_cagr:.2%}"]
+            if is_dca:
+                mwr_val = getattr(bt, 'mwr', float('nan'))
+                metric_rows.append('CAGR (MWR / IRR)')
+                port_vals.append(f"{mwr_val:.2%}" if mwr_val == mwr_val else "N/A")
+                bench_vals.append("—")  # benchmark is lump-sum, MWR == TWR; show dash to avoid clutter
+            metric_rows += ['Daily Volatility (Ann.)', 'Sharpe Ratio', 'Max Drawdown', 'Beta', 'Alpha']
+            port_vals  += [f"{bt.volatility:.2%}", f"{bt.sharpe:.2f}", f"{bt.max_drawdown:.2%}", beta_port, alpha_port]
+            bench_vals += [f"{bt.bench_volatility:.2%}", f"{bt.bench_sharpe:.2f}", f"{bt.bench_max_drawdown:.2%}", "1.00", "0.00%"]
+
             metrics_df = pd.DataFrame({
-                'Metric': ['CAGR', 'Daily Volatility (Ann.)', 'Sharpe Ratio', 'Max Drawdown', 'Beta', 'Alpha'],
-                'Portfolio': [f"{bt.cagr:.2%}", f"{bt.volatility:.2%}", f"{bt.sharpe:.2f}", f"{bt.max_drawdown:.2%}", beta_port, alpha_port],
-                f'Benchmark ({bench_label})': [f"{bt.bench_cagr:.2%}", f"{bt.bench_volatility:.2%}", f"{bt.bench_sharpe:.2f}", f"{bt.bench_max_drawdown:.2%}", "1.00", "0.00%"]
+                'Metric': metric_rows,
+                'Portfolio': port_vals,
+                f'Benchmark ({bench_label})': bench_vals,
             })
             st.table(metrics_df.set_index('Metric'))
+            if is_dca:
+                twr_total = (bt.cumulative_returns.iloc[-1] - 1) * 100
+                roi = (bt.portfolio_value.iloc[-1] / bt.invested_capitals.iloc[-1] - 1) * 100
+                st.caption(
+                    f"📌 **TWR vs MWR 해석 도움**: 동일한 적립식 결과를 보는 두 시각입니다. "
+                    f"TWR 누적 수익률은 **{twr_total:+.2f}%** (전략이 1달러를 얼마로 불렸나), "
+                    f"MWR 총 ROI는 **{roi:+.2f}%** (`최종잔고/총투입-1`, 실제 내가 번 돈 비율). "
+                    f"TWR이 높고 MWR이 낮으면 초반에 좋은 시장이 있었던 것이고, 반대면 후반에 시장이 좋았습니다."
+                )
             if beta_help:
                 st.caption(beta_help)
             
