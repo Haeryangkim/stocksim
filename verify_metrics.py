@@ -161,9 +161,13 @@ def t3_dca_twr_invariance(R):
 
 
 def t4_benchmark_dca_handling(R):
-    """Benchmark must reflect pure market growth on initial_capital, with
-    NO DCA injection. ('시장은 적립식으로 사주지 않는다')."""
-    print("\n[T4] Benchmark does NOT receive DCA injections")
+    """Two benchmark series:
+      bench_value     — pure lump-sum on initial_capital (market reference)
+      bench_value_dca — same cash-flow schedule as portfolio (DCA-matched)
+    In a constant-rate market the DCA-matched benchmark must end up at
+    EXACTLY the portfolio's value (same returns + same flows).
+    """
+    print("\n[T4] Benchmark has both lump-sum and DCA-matched lines")
     n = 252 * 2
     prices = constant_growth_df(0.0005, n, tickers=['A'])
     bench = constant_growth_df(0.0005, n, tickers=['B'])['B']
@@ -177,16 +181,19 @@ def t4_benchmark_dca_handling(R):
     years = (idx_ret[-1] - idx_ret[0]).days / 365.25
     expected_market_cum = (1 + 0.0005) ** n_ret
     expected_market_cagr = expected_market_cum ** (1 / years) - 1
-    expected_bench_value = 10000 * expected_market_cum
+    expected_bench_lump = 10000 * expected_market_cum
 
     R.check("Bench TWR CAGR = pure market CAGR", bt.bench_cagr, expected_market_cagr, tol=1e-6)
     R.check("Bench TWR cumulative = pure market cumulative",
             bt.bench_cumulative.iloc[-1], expected_market_cum, tol=1e-6)
-    R.check("Bench dollar value = initial * market_cumulative (no DCA)",
-            bt.bench_value.iloc[-1], expected_bench_value, tol=1e-4)
+    R.check("bench_value = initial * market_cumulative (lump-sum, no DCA)",
+            bt.bench_value.iloc[-1], expected_bench_lump, tol=1e-4)
+    R.check("bench_value_dca == portfolio_value (same returns, same flows)",
+            bt.bench_value_dca.iloc[-1], bt.portfolio_value.iloc[-1], tol=1e-4)
     R.note(f"  → portfolio with DCA = ${bt.portfolio_value.iloc[-1]:,.2f}, "
-            f"benchmark lump-only = ${bt.bench_value.iloc[-1]:,.2f}, "
-            f"total invested = ${bt.invested_capitals.iloc[-1]:,.2f}")
+           f"bench DCA-matched = ${bt.bench_value_dca.iloc[-1]:,.2f}, "
+           f"bench lump-sum    = ${bt.bench_value.iloc[-1]:,.2f}, "
+           f"invested          = ${bt.invested_capitals.iloc[-1]:,.2f}")
 
 
 def t5_inflation_benchmark_semantics(R):
@@ -203,11 +210,13 @@ def t5_inflation_benchmark_semantics(R):
     bt.run()
 
     n_ret = n - 1
-    expected = 10000 * (1 + cpi_daily) ** n_ret
-    R.check("Inflation bench_value = initial * inflation_cumulative",
-            bt.bench_value.iloc[-1], expected, tol=1e-4)
-    R.note(f"  → '10k kept pace with inflation' = ${expected:,.2f}, "
-           f"portfolio with DCA = ${bt.portfolio_value.iloc[-1]:,.2f}")
+    expected_lump = 10000 * (1 + cpi_daily) ** n_ret
+    R.check("Inflation bench_value (lump) = initial * inflation_cumulative",
+            bt.bench_value.iloc[-1], expected_lump, tol=1e-4)
+    # DCA-matched inflation bench should equal total invested grown at CPI
+    R.note(f"  → lump  = ${bt.bench_value.iloc[-1]:,.2f} (10k preserved purchasing power)")
+    R.note(f"  → DCA   = ${bt.bench_value_dca.iloc[-1]:,.2f} (all 34k contributions, inflation-adjusted)")
+    R.note(f"  → port  = ${bt.portfolio_value.iloc[-1]:,.2f}")
 
 
 def t6_beta_alpha_when_equal(R):

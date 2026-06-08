@@ -139,16 +139,18 @@ class PortfolioBacktest:
         returns, self.bench_returns = returns.align(self.bench_returns, join='inner', axis=0)
         
         asset_dollars = self.initial_capital * self.weights
-        bench_dollar_value = self.initial_capital
+        bench_dollar_value = self.initial_capital      # pure lump-sum reference
+        bench_dollar_value_dca = self.initial_capital  # DCA-matched reference
         invested_capital = self.initial_capital
-        
+
         portfolio_dollar_values = []
         bench_values = []
+        bench_values_dca = []
         invested_capitals = []
-        
+
         daily_returns_dollar = []
         bench_returns_dollar = []
-        
+
         prev_portfolio_value = self.initial_capital
         prev_bench_value = self.initial_capital
         
@@ -175,6 +177,7 @@ class PortfolioBacktest:
             # 1. Market moves
             asset_dollars = asset_dollars * (1 + daily_ret.values)
             bench_dollar_value = bench_dollar_value * (1 + self.bench_returns.iloc[i])
+            bench_dollar_value_dca = bench_dollar_value_dca * (1 + self.bench_returns.iloc[i])
             
             curr_portfolio_value = np.sum(asset_dollars)
             
@@ -193,13 +196,15 @@ class PortfolioBacktest:
                 asset_dollars += self.installment_amount * self.weights
                 invested_capital += self.installment_amount
                 curr_portfolio_value += self.installment_amount
-                # Benchmark intentionally does NOT receive installments: it
-                # represents pure market growth on the initial capital.
-            
+                # DCA-matched benchmark receives the same cash flow; the pure
+                # lump-sum benchmark (bench_dollar_value) does not.
+                bench_dollar_value_dca += self.installment_amount
+
             portfolio_dollar_values.append(curr_portfolio_value)
             bench_values.append(bench_dollar_value)
+            bench_values_dca.append(bench_dollar_value_dca)
             invested_capitals.append(invested_capital)
-            
+
             prev_portfolio_value = curr_portfolio_value
             prev_bench_value = bench_dollar_value
             
@@ -209,6 +214,7 @@ class PortfolioBacktest:
         
         self.bench_cumulative = (1 + pd.Series(bench_returns_dollar, index=returns.index)).cumprod()
         self.bench_value = pd.Series(bench_values, index=returns.index)
+        self.bench_value_dca = pd.Series(bench_values_dca, index=returns.index)
         self.invested_capitals = pd.Series(invested_capitals, index=returns.index)
         
         self.calculate_metrics()

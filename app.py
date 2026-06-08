@@ -178,21 +178,24 @@ else:
             # Growth Chart
             bench_label = getattr(bt, 'benchmark_label', benchmark)
             st.subheader("Portfolio Growth")
-            growth_df = pd.DataFrame({
-                'Portfolio': bt.portfolio_value,
-                f'Benchmark ({bench_label})': bt.bench_value
-            })
+            growth_cols = {'Portfolio': bt.portfolio_value}
+            if is_dca and hasattr(bt, 'bench_value_dca'):
+                growth_cols[f'Benchmark ({bench_label}, DCA-matched)'] = bt.bench_value_dca
+                growth_cols[f'Benchmark ({bench_label}, lump-sum)'] = bt.bench_value
+            else:
+                growth_cols[f'Benchmark ({bench_label})'] = bt.bench_value
+            growth_df = pd.DataFrame(growth_cols)
             st.line_chart(growth_df.resample('W').last())
             st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
             if is_dca:
                 st.caption(
-                    "ℹ️ 적립식 모드에서 **벤치마크 선은 초기 자본만 시장에 lump-sum 투자한 경우의 가상 잔고**입니다 "
-                    "(벤치마크에는 추가 적립이 적용되지 않음 — '시장은 적립식으로 사주지 않는다'). "
-                    "포트폴리오 선은 초기 자본 + 적립금이 모두 반영된 실제 잔고이므로, 두 선의 절대 금액을 단순 비교하기보다는 "
-                    "아래 **CAGR(TWR)** 으로 전략의 시간가중 수익률을, **MWR(IRR)** 로 실제 투입 자금에 대한 연환산 수익률을 비교하세요."
+                    "ℹ️ 적립식 모드에서는 벤치마크가 두 선으로 표시됩니다. "
+                    "**DCA-matched** 선은 동일한 일정으로 벤치마크에 적립 투자했을 때의 잔고이고 (포트폴리오와 같은 총 투입금액 → 직접 비교용), "
+                    "**lump-sum** 선은 초기 자본만 한 번에 벤치마크에 투입했을 때의 잔고입니다 (순수 시장 성장 기준선). "
+                    "지표 표의 **CAGR(TWR)** 은 전략의 시간가중 수익률, **MWR(IRR)** 은 실제 투입 자금에 대한 연환산 수익률입니다."
                 )
             if getattr(bt, 'benchmark_is_inflation', False):
-                st.caption("벤치마크가 물가(CPI)이므로 '벤치마크'는 동일 원금을 물가상승률로만 불렸을 때의 가상 잔고입니다. 포트폴리오가 이 선을 넘으면 실질 수익(real return)이 (+)입니다.")
+                st.caption("벤치마크가 물가(CPI)이므로 '벤치마크'는 같은 원금이 물가상승률로만 불었을 때의 잔고입니다. 포트폴리오가 이 선을 넘으면 실질 수익(real return)이 (+)입니다.")
             
             # --- Risk & Return Metrics ---
             st.header("3. Risk & Return Metrics")
