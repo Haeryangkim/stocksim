@@ -5,6 +5,7 @@ venv/
 
 # Runtime state (persisted via Docker volume mount locally)
 usage_stats.json
+strategies.json
 
 # Stray symlinks accidentally created in repo root
 /docker-compose

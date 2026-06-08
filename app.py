@@ -13,6 +13,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="Stock Portfolio Backtester", layout="wide")
 
 STATS_FILE = "usage_stats.json"
+STRATEGIES_FILE = "strategies.json"
 
 def load_stats():
     if os.path.exists(STATS_FILE):
@@ -30,11 +31,37 @@ def save_stats(stats):
     except:
         pass
 
+
+def load_strategies():
+    if os.path.exists(STRATEGIES_FILE):
+        try:
+            with open(STRATEGIES_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data.get("strategies", [])
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return []
+
+
+def save_strategies(strategies):
+    try:
+        with open(STRATEGIES_FILE, "w") as f:
+            json.dump({"strategies": strategies}, f, indent=2)
+    except Exception:
+        pass
+
+
 if 'visited' not in st.session_state:
     st.session_state.visited = True
     stats = load_stats()
     stats["page_views"] += 1
     save_stats(stats)
+
+if 'strategies' not in st.session_state:
+    st.session_state.strategies = load_strategies()
 
 
 @st.cache_data
@@ -124,244 +151,458 @@ if BENCHMARK_OPTIONS[benchmark_choice] == "__CUSTOM__":
 else:
     benchmark = BENCHMARK_OPTIONS[benchmark_choice]
 
-if len(tickers) != len(weights):
-    st.sidebar.error("Number of tickers and weights must match.")
-elif not np.isclose(sum(weights), 1.0):
-    st.sidebar.error(f"Weights must sum to 100%. Currently sum to {sum(weights)*100:.1f}%")
-else:
-    if st.sidebar.button("Run Backtest"):
-        tickers_weights = dict(zip(tickers, weights))
-        
-        with st.spinner("Fetching data and running backtest..."):
-            bt = PortfolioBacktest(tickers_weights, start_date, end_date, initial_capital, benchmark, rebalance, installment_amount, installment_frequency)
-            try:
-                bt.run()
-                success = True
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
-                success = False
-                
-        if success:
-            stats = load_stats()
-            stats["executions"] += 1
-            save_stats(stats)
-            st.success("Backtest complete!")
-            
-            if hasattr(bt, 'start_date_adjusted') and bt.start_date_adjusted:
-                st.warning(f"⚠️ **상장일 알림**: 설정하신 시작일({start_date}) 당시에 상장되지 않은 종목이 포함되어 있습니다. 가장 늦게 상장된 종목의 데이터가 존재하는 **{bt.actual_start_date}** 부터 백테스트가 자동으로 조절되어 실행되었습니다.")
-            
-            # --- Overview & Allocation ---
-            st.header("1. Portfolio Overview & Allocation", help="백테스트의 최종 자산 평가 금액, 누적 원금, 순수익 요약과 포트폴리오의 비중 파이를 보여줍니다.")
-            is_dca = bt.installment_amount > 0 and bt.installment_frequency != 'None'
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**Investment Parameters**")
-                st.write(f"- **Initial Balance:** ${bt.initial_capital:,.2f}")
-                if is_dca:
-                    st.write(f"- **Total Invested:** ${bt.invested_capitals.iloc[-1]:,.2f}")
-                st.write(f"- **Final Balance:** ${bt.portfolio_value.iloc[-1]:,.2f}")
-                st.write(f"- **Total Profit:** ${bt.portfolio_value.iloc[-1] - bt.invested_capitals.iloc[-1]:,.2f}")
-                st.write(f"- **Total Return (ROI):** {(bt.portfolio_value.iloc[-1] / bt.invested_capitals.iloc[-1] - 1)*100:.2f}%")
-                st.write(f"- **Rebalancing:** {rebalance}")
-                if is_dca:
-                    st.write(f"- **Installment:** ${bt.installment_amount:,.2f} ({bt.installment_frequency})")
-                st.write(f"- **Time Period:** {start_date} to {end_date}")
-            with col2:
-                fig, ax = plt.subplots(figsize=(4, 4))
-                ax.pie(weights, labels=tickers, autopct='%1.1f%%', startangle=90)
-                ax.axis('equal')
-                st.pyplot(fig)
-                
-            # --- Performance & Returns ---
-            st.header("2. Performance & Returns", help="투자 기간 동안 포트폴리오 가치와 벤치마크(기준 시장) 가치의 누적 상승 추이를 시각적인 그래프로 비교합니다.")
-            
-            # Growth Chart
-            bench_label = getattr(bt, 'benchmark_label', benchmark)
-            st.subheader("Portfolio Growth")
-            growth_cols = {'Portfolio': bt.portfolio_value}
-            if is_dca and hasattr(bt, 'bench_value_dca'):
-                growth_cols[f'Benchmark ({bench_label}, DCA-matched)'] = bt.bench_value_dca
-                growth_cols[f'Benchmark ({bench_label}, lump-sum)'] = bt.bench_value
-            else:
-                growth_cols[f'Benchmark ({bench_label})'] = bt.bench_value
-            growth_df = pd.DataFrame(growth_cols)
-            st.line_chart(growth_df.resample('W').last())
-            st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
-            if is_dca:
-                st.caption(
-                    "ℹ️ 적립식 모드에서는 벤치마크가 두 선으로 표시됩니다. "
-                    "**DCA-matched** 선은 동일한 일정으로 벤치마크에 적립 투자했을 때의 잔고이고 (포트폴리오와 같은 총 투입금액 → 직접 비교용), "
-                    "**lump-sum** 선은 초기 자본만 한 번에 벤치마크에 투입했을 때의 잔고입니다 (순수 시장 성장 기준선). "
-                    "지표 표의 **CAGR(TWR)** 은 전략의 시간가중 수익률, **MWR(IRR)** 은 실제 투입 자금에 대한 연환산 수익률입니다."
+tab_single, tab_compare = st.tabs(["📊 Single Backtest", "⚖️ Strategy Comparison"])
+
+with tab_single:
+    if len(tickers) != len(weights):
+        st.error("Number of tickers and weights must match.")
+        st.sidebar.error("Number of tickers and weights must match.")
+    elif not np.isclose(sum(weights), 1.0):
+        st.error(f"Weights must sum to 100%. Currently sum to {sum(weights)*100:.1f}%")
+        st.sidebar.error(f"Weights must sum to 100%. Currently sum to {sum(weights)*100:.1f}%")
+    else:
+        # --- Save Strategy form ---
+        with st.expander("💾 Save current config as a named strategy"):
+            save_col1, save_col2 = st.columns([3, 1])
+            with save_col1:
+                new_strategy_name = st.text_input(
+                    "Strategy name",
+                    value="",
+                    placeholder="e.g. 60/40 SPY-TLT Monthly DCA",
+                    key="new_strategy_name",
+                    label_visibility="collapsed",
                 )
-            if getattr(bt, 'benchmark_is_inflation', False):
-                st.caption("벤치마크가 물가(CPI)이므로 '벤치마크'는 같은 원금이 물가상승률로만 불었을 때의 잔고입니다. 포트폴리오가 이 선을 넘으면 실질 수익(real return)이 (+)입니다.")
-            
-            # --- Risk & Return Metrics ---
-            st.header("3. Risk & Return Metrics")
-            st.markdown("""
-            * **CAGR (TWR)** (Compound Annual Growth Rate, Time-Weighted): 전략 자체의 연평균 복리 수익률입니다. 현금 흐름(적립/인출)의 영향을 제외하고, 시장에서 전략이 얼마나 잘 굴러갔는지를 봅니다.
-            * **CAGR (MWR / IRR)** (Money-Weighted Return): 실제로 투입한 자금의 시점까지 고려한 연환산 내부수익률. lump-sum이면 TWR과 같지만, **적립식에선 같지 않습니다** (뒤늦게 들어온 돈은 복리 기간이 짧으니까요).
-            * **Daily Volatility (Ann.)** (연환산 변동성): 포트폴리오 수익률이 얼마나 출렁이는지를 나타내는 위험 지표입니다. 낮을수록 안정적입니다.
-            * **Sharpe Ratio** (샤프 지수): 1단위 위험을 감수할 때 얻을 수 있는 초과 수익률입니다. 높을수록 좋습니다.
-            * **Max Drawdown** (MDD, 최대 낙폭): 직전 최고점(전고점) 대비 최대로 하락한 비율을 의미하며, 해당 포트폴리오의 가장 큰 손실 위험을 나타냅니다.
-            * **Beta** (베타): 시장(벤치마크)의 움직임에 얼마나 민감하게 반응하는지를 수치화한 것입니다. 1보다 크면 시장보다 변동이 크다는 뜻입니다.
-            * **Alpha** (알파): 벤치마크 대비 포트폴리오의 실질적인 초과 수익률입니다. 높을수록 좋습니다.
-            """)
-            if getattr(bt, 'benchmark_is_inflation', False):
-                beta_port, alpha_port = "N/A", "N/A"
-                beta_help = "벤치마크가 CPI(물가)라 시장 민감도 지표인 Beta/Alpha는 의미가 없어 표시하지 않습니다."
-            else:
-                beta_port, alpha_port = f"{bt.beta:.2f}", f"{bt.alpha:.2%}"
-                beta_help = None
-
-            metric_rows = ['CAGR (TWR)']
-            port_vals = [f"{bt.cagr:.2%}"]
-            bench_vals = [f"{bt.bench_cagr:.2%}"]
-            if is_dca:
-                mwr_val = getattr(bt, 'mwr', float('nan'))
-                metric_rows.append('CAGR (MWR / IRR)')
-                port_vals.append(f"{mwr_val:.2%}" if mwr_val == mwr_val else "N/A")
-                bench_vals.append("—")  # benchmark is lump-sum, MWR == TWR; show dash to avoid clutter
-            metric_rows += ['Daily Volatility (Ann.)', 'Sharpe Ratio', 'Max Drawdown', 'Beta', 'Alpha']
-            port_vals  += [f"{bt.volatility:.2%}", f"{bt.sharpe:.2f}", f"{bt.max_drawdown:.2%}", beta_port, alpha_port]
-            bench_vals += [f"{bt.bench_volatility:.2%}", f"{bt.bench_sharpe:.2f}", f"{bt.bench_max_drawdown:.2%}", "1.00", "0.00%"]
-
-            metrics_df = pd.DataFrame({
-                'Metric': metric_rows,
-                'Portfolio': port_vals,
-                f'Benchmark ({bench_label})': bench_vals,
-            })
-            st.table(metrics_df.set_index('Metric'))
-            if is_dca:
-                twr_total = (bt.cumulative_returns.iloc[-1] - 1) * 100
-                roi = (bt.portfolio_value.iloc[-1] / bt.invested_capitals.iloc[-1] - 1) * 100
-                st.caption(
-                    f"📌 **TWR vs MWR 해석 도움**: 동일한 적립식 결과를 보는 두 시각입니다. "
-                    f"TWR 누적 수익률은 **{twr_total:+.2f}%** (전략이 1달러를 얼마로 불렸나), "
-                    f"MWR 총 ROI는 **{roi:+.2f}%** (`최종잔고/총투입-1`, 실제 내가 번 돈 비율). "
-                    f"TWR이 높고 MWR이 낮으면 초반에 좋은 시장이 있었던 것이고, 반대면 후반에 시장이 좋았습니다."
-                )
-            if beta_help:
-                st.caption(beta_help)
-            
-            # --- Drawdowns Analysis ---
-            st.header("4. Drawdowns Analysis", help="직전 최고점(전고점) 대비 자산이 얼마나 하락했는지(손실폭)를 보여주는 낙폭 차트입니다. 그래프가 아래로 패인 구간이 경제 위기나 하락장 구간입니다.")
-
-            def _dollar_drawdown(series):
-                return (series / series.cummax() - 1.0) * 100
-
-            port_dd_dollar = _dollar_drawdown(bt.portfolio_value)
-            bench_dd_lump  = _dollar_drawdown(bt.bench_value)
-
-            dd_cols = {'Portfolio Drawdown (%)': port_dd_dollar}
-            if is_dca and hasattr(bt, 'bench_value_dca'):
-                bench_dd_dca = _dollar_drawdown(bt.bench_value_dca)
-                dd_cols[f'Benchmark ({bench_label}, DCA-matched) Drawdown (%)'] = bench_dd_dca
-                dd_cols[f'Benchmark ({bench_label}, lump-sum) Drawdown (%)']    = bench_dd_lump
-            else:
-                dd_cols[f'Benchmark ({bench_label}) Drawdown (%)'] = bench_dd_lump
-
-            dd_df = pd.DataFrame(dd_cols)
-            st.line_chart(dd_df.resample('W').last())
-            st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
-            if is_dca:
-                st.caption(
-                    "ℹ️ 이 차트는 **실제 잔고 기준 낙폭**입니다(그로스 차트와 동일한 잔고 시계열에서 계산). "
-                    "DCA 모드에서는 새 적립금이 들어오면 직전 최고점이 갱신되거나 일시적으로 낙폭이 메워지므로, "
-                    "위 지표 표의 **Max Drawdown (TWR 기준 — 적립금 영향 제거된 순수 시장 낙폭)** 보다 절대값이 작을 수 있습니다."
-                )
-
-            # --- Start-Date Sensitivity ---
-            st.header(
-                "5. Start-Date Sensitivity",
-                help="'언제 투자를 시작했느냐'에 따라 현재(종료일)까지의 수익률이 얼마나 달라지는지를 보여줍니다. 각 월초를 가상의 시작 시점으로 삼아 종료일까지의 CAGR/총수익률을 계산해 선으로 잇습니다. 선이 가파르면 타이밍 민감도가 크고, 평평하면 둔감합니다.",
+            with save_col2:
+                if st.button("Save", key="save_strategy_btn", use_container_width=True):
+                    if not new_strategy_name.strip():
+                        st.warning("이름을 입력해주세요.")
+                    else:
+                        new_strat = {
+                            "name": new_strategy_name.strip(),
+                            "tickers_weights": dict(zip(tickers, weights)),
+                            "rebalance": rebalance,
+                            "initial_capital": int(initial_capital),
+                            "installment_amount": int(installment_amount),
+                            "installment_frequency": installment_frequency,
+                            "benchmark": benchmark,
+                        }
+                        existing = [s for s in st.session_state.strategies if s["name"] != new_strat["name"]]
+                        existing.append(new_strat)
+                        st.session_state.strategies = existing
+                        save_strategies(st.session_state.strategies)
+                        st.success(f"전략 '{new_strat['name']}' 저장됨. 비교 탭에서 사용할 수 있습니다.")
+            st.caption(
+                "현재 사이드바에 설정된 티커/비중/리밸런싱 주기/초기 자본/적립식 일정/벤치마크가 모두 함께 저장됩니다. "
+                "같은 이름의 전략이 있으면 덮어씁니다."
             )
-            try:
-                sensitivity = bt.rolling_start_analysis()
-            except Exception as e:
-                sensitivity = None
-                st.info(f"Start-date sensitivity 계산 중 오류: {e}")
 
-            if sensitivity is not None and not sensitivity.empty:
-                metric_options = ["CAGR (TWR, lump-sum)", "Total Return (TWR)"]
-                if is_dca and 'Portfolio MWR' in sensitivity.columns:
-                    metric_options.append("MWR (IRR, DCA-aware)")
-                metric_choice = st.radio(
-                    "Metric",
-                    metric_options,
-                    index=0,
-                    horizontal=True,
-                    key="sensitivity_metric",
-                )
-                if metric_choice.startswith("CAGR"):
-                    plot_df = sensitivity[['Portfolio CAGR', 'Benchmark CAGR']].rename(
-                        columns={'Benchmark CAGR': f'Benchmark CAGR ({bench_label})'}
-                    )
-                elif metric_choice.startswith("Total"):
-                    plot_df = sensitivity[['Portfolio Total Return', 'Benchmark Total Return']].rename(
-                        columns={'Benchmark Total Return': f'Benchmark Total Return ({bench_label})'}
-                    )
-                else:  # MWR
-                    plot_df = sensitivity[['Portfolio MWR', 'Benchmark MWR']].rename(
-                        columns={'Benchmark MWR': f'Benchmark MWR ({bench_label})'}
-                    )
-                st.line_chart(plot_df)
-                st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
-
-                if metric_choice.startswith("MWR"):
-                    st.caption(
-                        f"각 X축 지점은 '이 날부터 동일 일정(초기 ${bt.initial_capital:,.0f} + ${bt.installment_amount:,.0f}/{bt.installment_frequency})으로 시작했다면' "
-                        "의 가상 시작일이며, 종료일까지 실제 투입한 자금에 대한 **연환산 내부수익률(IRR)** 입니다. "
-                        "CAGR(TWR)이 전략의 시간가중 성과라면, 이 MWR은 적립 일정까지 반영한 '내 실제 돈 기준' 성과입니다."
-                    )
+        if st.button("▶ Run Backtest", type="primary", key="run_single_backtest"):
+            tickers_weights = dict(zip(tickers, weights))
+        
+            with st.spinner("Fetching data and running backtest..."):
+                bt = PortfolioBacktest(tickers_weights, start_date, end_date, initial_capital, benchmark, rebalance, installment_amount, installment_frequency)
+                try:
+                    bt.run()
+                    success = True
+                except Exception as e:
+                    st.error(f"An error occurred: {e}")
+                    success = False
+                    
+            if success:
+                stats = load_stats()
+                stats["executions"] += 1
+                save_stats(stats)
+                st.success("Backtest complete!")
+                
+                if hasattr(bt, 'start_date_adjusted') and bt.start_date_adjusted:
+                    st.warning(f"⚠️ **상장일 알림**: 설정하신 시작일({start_date}) 당시에 상장되지 않은 종목이 포함되어 있습니다. 가장 늦게 상장된 종목의 데이터가 존재하는 **{bt.actual_start_date}** 부터 백테스트가 자동으로 조절되어 실행되었습니다.")
+                
+                # --- Overview & Allocation ---
+                st.header("1. Portfolio Overview & Allocation", help="백테스트의 최종 자산 평가 금액, 누적 원금, 순수익 요약과 포트폴리오의 비중 파이를 보여줍니다.")
+                is_dca = bt.installment_amount > 0 and bt.installment_frequency != 'None'
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Investment Parameters**")
+                    st.write(f"- **Initial Balance:** ${bt.initial_capital:,.2f}")
+                    if is_dca:
+                        st.write(f"- **Total Invested:** ${bt.invested_capitals.iloc[-1]:,.2f}")
+                    st.write(f"- **Final Balance:** ${bt.portfolio_value.iloc[-1]:,.2f}")
+                    st.write(f"- **Total Profit:** ${bt.portfolio_value.iloc[-1] - bt.invested_capitals.iloc[-1]:,.2f}")
+                    st.write(f"- **Total Return (ROI):** {(bt.portfolio_value.iloc[-1] / bt.invested_capitals.iloc[-1] - 1)*100:.2f}%")
+                    st.write(f"- **Rebalancing:** {rebalance}")
+                    if is_dca:
+                        st.write(f"- **Installment:** ${bt.installment_amount:,.2f} ({bt.installment_frequency})")
+                    st.write(f"- **Time Period:** {start_date} to {end_date}")
+                with col2:
+                    fig, ax = plt.subplots(figsize=(4, 4))
+                    ax.pie(weights, labels=tickers, autopct='%1.1f%%', startangle=90)
+                    ax.axis('equal')
+                    st.pyplot(fig)
+                    
+                # --- Performance & Returns ---
+                st.header("2. Performance & Returns", help="투자 기간 동안 포트폴리오 가치와 벤치마크(기준 시장) 가치의 누적 상승 추이를 시각적인 그래프로 비교합니다.")
+                
+                # Growth Chart
+                bench_label = getattr(bt, 'benchmark_label', benchmark)
+                st.subheader("Portfolio Growth")
+                growth_cols = {'Portfolio': bt.portfolio_value}
+                if is_dca and hasattr(bt, 'bench_value_dca'):
+                    growth_cols[f'Benchmark ({bench_label}, DCA-matched)'] = bt.bench_value_dca
+                    growth_cols[f'Benchmark ({bench_label}, lump-sum)'] = bt.bench_value
                 else:
+                    growth_cols[f'Benchmark ({bench_label})'] = bt.bench_value
+                growth_df = pd.DataFrame(growth_cols)
+                st.line_chart(growth_df.resample('W').last())
+                st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
+                if is_dca:
                     st.caption(
-                        f"각 X축 지점은 '이 날 투자를 시작했다면' 의 가상 시작일이며, 종료일({end_date})까지의 성과를 의미합니다. "
-                        "이 선은 lump-sum 기준(시간가중 수익률, TWR)으로, 적립금 일정에 의존하지 않습니다."
+                        "ℹ️ 적립식 모드에서는 벤치마크가 두 선으로 표시됩니다. "
+                        "**DCA-matched** 선은 동일한 일정으로 벤치마크에 적립 투자했을 때의 잔고이고 (포트폴리오와 같은 총 투입금액 → 직접 비교용), "
+                        "**lump-sum** 선은 초기 자본만 한 번에 벤치마크에 투입했을 때의 잔고입니다 (순수 시장 성장 기준선). "
+                        "지표 표의 **CAGR(TWR)** 은 전략의 시간가중 수익률, **MWR(IRR)** 은 실제 투입 자금에 대한 연환산 수익률입니다."
+                    )
+                if getattr(bt, 'benchmark_is_inflation', False):
+                    st.caption("벤치마크가 물가(CPI)이므로 '벤치마크'는 같은 원금이 물가상승률로만 불었을 때의 잔고입니다. 포트폴리오가 이 선을 넘으면 실질 수익(real return)이 (+)입니다.")
+                
+                # --- Risk & Return Metrics ---
+                st.header("3. Risk & Return Metrics")
+                st.markdown("""
+                * **CAGR (TWR)** (Compound Annual Growth Rate, Time-Weighted): 전략 자체의 연평균 복리 수익률입니다. 현금 흐름(적립/인출)의 영향을 제외하고, 시장에서 전략이 얼마나 잘 굴러갔는지를 봅니다.
+                * **CAGR (MWR / IRR)** (Money-Weighted Return): 실제로 투입한 자금의 시점까지 고려한 연환산 내부수익률. lump-sum이면 TWR과 같지만, **적립식에선 같지 않습니다** (뒤늦게 들어온 돈은 복리 기간이 짧으니까요).
+                * **Daily Volatility (Ann.)** (연환산 변동성): 포트폴리오 수익률이 얼마나 출렁이는지를 나타내는 위험 지표입니다. 낮을수록 안정적입니다.
+                * **Sharpe Ratio** (샤프 지수): 1단위 위험을 감수할 때 얻을 수 있는 초과 수익률입니다. 높을수록 좋습니다.
+                * **Max Drawdown** (MDD, 최대 낙폭): 직전 최고점(전고점) 대비 최대로 하락한 비율을 의미하며, 해당 포트폴리오의 가장 큰 손실 위험을 나타냅니다.
+                * **Beta** (베타): 시장(벤치마크)의 움직임에 얼마나 민감하게 반응하는지를 수치화한 것입니다. 1보다 크면 시장보다 변동이 크다는 뜻입니다.
+                * **Alpha** (알파): 벤치마크 대비 포트폴리오의 실질적인 초과 수익률입니다. 높을수록 좋습니다.
+                """)
+                if getattr(bt, 'benchmark_is_inflation', False):
+                    beta_port, alpha_port = "N/A", "N/A"
+                    beta_help = "벤치마크가 CPI(물가)라 시장 민감도 지표인 Beta/Alpha는 의미가 없어 표시하지 않습니다."
+                else:
+                    beta_port, alpha_port = f"{bt.beta:.2f}", f"{bt.alpha:.2%}"
+                    beta_help = None
+    
+                metric_rows = ['CAGR (TWR)']
+                port_vals = [f"{bt.cagr:.2%}"]
+                bench_vals = [f"{bt.bench_cagr:.2%}"]
+                if is_dca:
+                    mwr_val = getattr(bt, 'mwr', float('nan'))
+                    metric_rows.append('CAGR (MWR / IRR)')
+                    port_vals.append(f"{mwr_val:.2%}" if mwr_val == mwr_val else "N/A")
+                    bench_vals.append("—")  # benchmark is lump-sum, MWR == TWR; show dash to avoid clutter
+                metric_rows += ['Daily Volatility (Ann.)', 'Sharpe Ratio', 'Max Drawdown', 'Beta', 'Alpha']
+                port_vals  += [f"{bt.volatility:.2%}", f"{bt.sharpe:.2f}", f"{bt.max_drawdown:.2%}", beta_port, alpha_port]
+                bench_vals += [f"{bt.bench_volatility:.2%}", f"{bt.bench_sharpe:.2f}", f"{bt.bench_max_drawdown:.2%}", "1.00", "0.00%"]
+    
+                metrics_df = pd.DataFrame({
+                    'Metric': metric_rows,
+                    'Portfolio': port_vals,
+                    f'Benchmark ({bench_label})': bench_vals,
+                })
+                st.table(metrics_df.set_index('Metric'))
+                if is_dca:
+                    twr_total = (bt.cumulative_returns.iloc[-1] - 1) * 100
+                    roi = (bt.portfolio_value.iloc[-1] / bt.invested_capitals.iloc[-1] - 1) * 100
+                    st.caption(
+                        f"📌 **TWR vs MWR 해석 도움**: 동일한 적립식 결과를 보는 두 시각입니다. "
+                        f"TWR 누적 수익률은 **{twr_total:+.2f}%** (전략이 1달러를 얼마로 불렸나), "
+                        f"MWR 총 ROI는 **{roi:+.2f}%** (`최종잔고/총투입-1`, 실제 내가 번 돈 비율). "
+                        f"TWR이 높고 MWR이 낮으면 초반에 좋은 시장이 있었던 것이고, 반대면 후반에 시장이 좋았습니다."
+                    )
+                if beta_help:
+                    st.caption(beta_help)
+                
+                # --- Drawdowns Analysis ---
+                st.header("4. Drawdowns Analysis", help="직전 최고점(전고점) 대비 자산이 얼마나 하락했는지(손실폭)를 보여주는 낙폭 차트입니다. 그래프가 아래로 패인 구간이 경제 위기나 하락장 구간입니다.")
+    
+                def _dollar_drawdown(series):
+                    return (series / series.cummax() - 1.0) * 100
+    
+                port_dd_dollar = _dollar_drawdown(bt.portfolio_value)
+                bench_dd_lump  = _dollar_drawdown(bt.bench_value)
+    
+                dd_cols = {'Portfolio Drawdown (%)': port_dd_dollar}
+                if is_dca and hasattr(bt, 'bench_value_dca'):
+                    bench_dd_dca = _dollar_drawdown(bt.bench_value_dca)
+                    dd_cols[f'Benchmark ({bench_label}, DCA-matched) Drawdown (%)'] = bench_dd_dca
+                    dd_cols[f'Benchmark ({bench_label}, lump-sum) Drawdown (%)']    = bench_dd_lump
+                else:
+                    dd_cols[f'Benchmark ({bench_label}) Drawdown (%)'] = bench_dd_lump
+    
+                dd_df = pd.DataFrame(dd_cols)
+                st.line_chart(dd_df.resample('W').last())
+                st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
+                if is_dca:
+                    st.caption(
+                        "ℹ️ 이 차트는 **실제 잔고 기준 낙폭**입니다(그로스 차트와 동일한 잔고 시계열에서 계산). "
+                        "DCA 모드에서는 새 적립금이 들어오면 직전 최고점이 갱신되거나 일시적으로 낙폭이 메워지므로, "
+                        "위 지표 표의 **Max Drawdown (TWR 기준 — 적립금 영향 제거된 순수 시장 낙폭)** 보다 절대값이 작을 수 있습니다."
+                    )
+    
+                # --- Start-Date Sensitivity ---
+                st.header(
+                    "5. Start-Date Sensitivity",
+                    help="'언제 투자를 시작했느냐'에 따라 현재(종료일)까지의 수익률이 얼마나 달라지는지를 보여줍니다. 각 월초를 가상의 시작 시점으로 삼아 종료일까지의 CAGR/총수익률을 계산해 선으로 잇습니다. 선이 가파르면 타이밍 민감도가 크고, 평평하면 둔감합니다.",
+                )
+                try:
+                    sensitivity = bt.rolling_start_analysis()
+                except Exception as e:
+                    sensitivity = None
+                    st.info(f"Start-date sensitivity 계산 중 오류: {e}")
+    
+                if sensitivity is not None and not sensitivity.empty:
+                    metric_options = ["CAGR (TWR, lump-sum)", "Total Return (TWR)"]
+                    if is_dca and 'Portfolio MWR' in sensitivity.columns:
+                        metric_options.append("MWR (IRR, DCA-aware)")
+                    metric_choice = st.radio(
+                        "Metric",
+                        metric_options,
+                        index=0,
+                        horizontal=True,
+                        key="sensitivity_metric",
+                    )
+                    if metric_choice.startswith("CAGR"):
+                        plot_df = sensitivity[['Portfolio CAGR', 'Benchmark CAGR']].rename(
+                            columns={'Benchmark CAGR': f'Benchmark CAGR ({bench_label})'}
+                        )
+                    elif metric_choice.startswith("Total"):
+                        plot_df = sensitivity[['Portfolio Total Return', 'Benchmark Total Return']].rename(
+                            columns={'Benchmark Total Return': f'Benchmark Total Return ({bench_label})'}
+                        )
+                    else:  # MWR
+                        plot_df = sensitivity[['Portfolio MWR', 'Benchmark MWR']].rename(
+                            columns={'Benchmark MWR': f'Benchmark MWR ({bench_label})'}
+                        )
+                    st.line_chart(plot_df)
+                    st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
+    
+                    if metric_choice.startswith("MWR"):
+                        st.caption(
+                            f"각 X축 지점은 '이 날부터 동일 일정(초기 ${bt.initial_capital:,.0f} + ${bt.installment_amount:,.0f}/{bt.installment_frequency})으로 시작했다면' "
+                            "의 가상 시작일이며, 종료일까지 실제 투입한 자금에 대한 **연환산 내부수익률(IRR)** 입니다. "
+                            "CAGR(TWR)이 전략의 시간가중 성과라면, 이 MWR은 적립 일정까지 반영한 '내 실제 돈 기준' 성과입니다."
+                        )
+                    else:
+                        st.caption(
+                            f"각 X축 지점은 '이 날 투자를 시작했다면' 의 가상 시작일이며, 종료일({end_date})까지의 성과를 의미합니다. "
+                            "이 선은 lump-sum 기준(시간가중 수익률, TWR)으로, 적립금 일정에 의존하지 않습니다."
+                        )
+    
+                    # Summary stats
+                    best = sensitivity['Portfolio CAGR'].idxmax()
+                    worst = sensitivity['Portfolio CAGR'].idxmin()
+                    colA, colB, colC = st.columns(3)
+                    colA.metric(
+                        "Best Start (CAGR)",
+                        best.strftime('%Y-%m-%d'),
+                        f"{sensitivity.loc[best, 'Portfolio CAGR']:.2%}",
+                    )
+                    colB.metric(
+                        "Worst Start (CAGR)",
+                        worst.strftime('%Y-%m-%d'),
+                        f"{sensitivity.loc[worst, 'Portfolio CAGR']:.2%}",
+                    )
+                    colC.metric(
+                        "Median Start CAGR",
+                        "—",
+                        f"{sensitivity['Portfolio CAGR'].median():.2%}",
+                    )
+    
+                    with st.expander("Raw data (start date × return)"):
+                        display_df = sensitivity.copy()
+                        pct_cols = [c for c in display_df.columns if c != 'Years Held']
+                        for c in pct_cols:
+                            display_df[c] = display_df[c].map(
+                                lambda x: f"{x:.2%}" if pd.notna(x) else "N/A"
+                            )
+                        display_df['Years Held'] = display_df['Years Held'].map(lambda x: f"{x:.2f}")
+                        st.dataframe(display_df)
+                else:
+                    st.info("데이터 기간이 너무 짧아 시작일별 민감도를 계산할 수 없습니다.")
+    
+                # --- Asset Level ---
+                st.header("6. Asset-Level Analysis", help="포트폴리오 구성 자산들의 일간 수익률 상관관계를 색상으로 표기한 히트맵입니다. 상관계수가 음수(파란색)이거나 낮은 자산끼리 섞이면 위험 분산(헤지) 효과가 커집니다.")
+                st.subheader("Asset Correlations (Daily Returns)")
+                returns = bt.prices.pct_change().dropna()
+                corr = returns.corr()
+                
+                fig, ax = plt.subplots(figsize=(6, 4))
+                sns.heatmap(corr, annot=True, cmap="coolwarm", vmin=-1, vmax=1, ax=ax)
+                st.pyplot(fig)
+
+
+with tab_compare:
+    st.subheader("Saved Strategies")
+
+    if not st.session_state.strategies:
+        st.info(
+            "저장된 전략이 없습니다. **Single Backtest** 탭에서 '💾 Save current config as a named strategy' "
+            "로 먼저 전략을 1개 이상 저장해주세요. 저장하는 정보: 티커/비중, 리밸런싱 주기, 초기 자본, "
+            "적립식 일정, 벤치마크."
+        )
+    else:
+        for strat in st.session_state.strategies:
+            row = st.columns([6, 1])
+            with row[0]:
+                tw_str = ", ".join(
+                    f"{k} {v*100:.0f}%" for k, v in strat['tickers_weights'].items()
+                )
+                if strat['installment_amount'] and strat['installment_frequency'] != 'None':
+                    flow_str = f"+${strat['installment_amount']:,}/{strat['installment_frequency']}"
+                else:
+                    flow_str = "lump-sum"
+                st.markdown(
+                    f"**{strat['name']}**  \n"
+                    f"<span style='color:gray; font-size: 0.85em'>"
+                    f"`{tw_str}` · rebal: {strat['rebalance']} · "
+                    f"init: ${strat['initial_capital']:,} · {flow_str} · "
+                    f"bench: {strat['benchmark']}</span>",
+                    unsafe_allow_html=True,
+                )
+            with row[1]:
+                if st.button("🗑", key=f"del_{strat['name']}", help=f"'{strat['name']}' 삭제"):
+                    st.session_state.strategies = [
+                        s for s in st.session_state.strategies if s['name'] != strat['name']
+                    ]
+                    save_strategies(st.session_state.strategies)
+                    st.rerun()
+
+        st.markdown("---")
+        st.subheader("Compare")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            compare_start = st.date_input(
+                "Start Date (shared)",
+                value=pd.to_datetime('2018-01-01'),
+                min_value=pd.to_datetime('1990-01-01'),
+                key="compare_start",
+                help="모든 전략에 동일하게 적용되는 백테스트 시작일.",
+            )
+        with col2:
+            compare_end = st.date_input(
+                "End Date (shared)",
+                value=pd.to_datetime('today'),
+                min_value=pd.to_datetime('1990-01-01'),
+                key="compare_end",
+            )
+
+        selected_names = st.multiselect(
+            "Select strategies to compare",
+            options=[s['name'] for s in st.session_state.strategies],
+            default=[s['name'] for s in st.session_state.strategies],
+            key="compare_selected",
+        )
+
+        bench_compare_choice = st.selectbox(
+            "Shared benchmark (used for all strategies in this comparison)",
+            list(BENCHMARK_OPTIONS.keys()),
+            index=0,
+            key="compare_bench_choice",
+            help="비교 차트와 Beta/Alpha 계산에 공통으로 쓰는 기준. 각 전략의 저장된 벤치마크는 Single Backtest 탭에서만 사용됩니다.",
+        )
+        if BENCHMARK_OPTIONS[bench_compare_choice] == "__CUSTOM__":
+            shared_bench = st.text_input("Custom Shared Benchmark Ticker", "SPY", key="compare_bench_custom")
+        else:
+            shared_bench = BENCHMARK_OPTIONS[bench_compare_choice]
+
+        if st.button("▶ Run Comparison", type="primary", key="run_comparison_btn"):
+            if not selected_names:
+                st.warning("비교할 전략을 1개 이상 선택해주세요.")
+            else:
+                results = []
+                with st.spinner(f"Running {len(selected_names)} backtests..."):
+                    for name in selected_names:
+                        strat = next(s for s in st.session_state.strategies if s['name'] == name)
+                        try:
+                            bt_c = PortfolioBacktest(
+                                strat['tickers_weights'],
+                                compare_start, compare_end,
+                                initial_capital=strat['initial_capital'],
+                                benchmark=shared_bench,
+                                rebalance=strat['rebalance'],
+                                installment_amount=strat['installment_amount'],
+                                installment_frequency=strat['installment_frequency'],
+                            )
+                            bt_c.run()
+                            results.append((name, strat, bt_c))
+                        except Exception as e:
+                            st.error(f"'{name}': {e}")
+
+                if results:
+                    bench_label_c = getattr(results[0][2], 'benchmark_label', shared_bench)
+
+                    caps = {r[1]['initial_capital'] for r in results}
+                    if len(caps) > 1:
+                        st.warning(
+                            f"⚠️ 선택한 전략들의 **초기 자본이 서로 다릅니다** ({sorted(caps)}). "
+                            "달러 잔고 그래프는 절대 금액 비교라 직접 비교가 어렵습니다 — 아래의 "
+                            "**Normalized Growth** 또는 **비율 지표(CAGR/MWR/Max DD)** 로 비교하세요."
+                        )
+
+                    st.subheader("Portfolio Growth")
+                    growth_cols = {name: bt_c.portfolio_value for name, _, bt_c in results}
+                    growth_cols[f'Benchmark ({bench_label_c}, lump-sum on ${results[0][2].initial_capital:,})'] = results[0][2].bench_value
+                    growth_df = pd.DataFrame(growth_cols)
+                    st.line_chart(growth_df.resample('W').last())
+                    st.caption(
+                        "각 전략은 저장된 초기 자본 + 적립 일정대로 시뮬레이션됩니다. "
+                        "벤치마크는 첫 번째 선택 전략의 초기 자본으로 lump-sum 투자한 기준선입니다."
                     )
 
-                # Summary stats
-                best = sensitivity['Portfolio CAGR'].idxmax()
-                worst = sensitivity['Portfolio CAGR'].idxmin()
-                colA, colB, colC = st.columns(3)
-                colA.metric(
-                    "Best Start (CAGR)",
-                    best.strftime('%Y-%m-%d'),
-                    f"{sensitivity.loc[best, 'Portfolio CAGR']:.2%}",
-                )
-                colB.metric(
-                    "Worst Start (CAGR)",
-                    worst.strftime('%Y-%m-%d'),
-                    f"{sensitivity.loc[worst, 'Portfolio CAGR']:.2%}",
-                )
-                colC.metric(
-                    "Median Start CAGR",
-                    "—",
-                    f"{sensitivity['Portfolio CAGR'].median():.2%}",
-                )
+                    st.subheader("Normalized Growth (1 invested $ → ?)")
+                    norm_cols = {}
+                    for name, _, bt_c in results:
+                        norm_cols[name] = bt_c.portfolio_value / bt_c.invested_capitals
+                    norm_cols[f'Benchmark ({bench_label_c})'] = results[0][2].bench_value / results[0][2].initial_capital
+                    norm_df = pd.DataFrame(norm_cols)
+                    st.line_chart(norm_df.resample('W').last())
+                    st.caption(
+                        "각 전략의 `portfolio_value / invested_capital` (지금까지 투입한 1달러가 얼마가 되었나) "
+                        "와 벤치마크의 lump-sum growth (1달러 → ?) 를 함께 보여줍니다. 적립식 효과를 제외한 "
+                        "순수 자본효율 비교에 유용합니다."
+                    )
 
-                with st.expander("Raw data (start date × return)"):
-                    display_df = sensitivity.copy()
-                    pct_cols = [c for c in display_df.columns if c != 'Years Held']
-                    for c in pct_cols:
-                        display_df[c] = display_df[c].map(
-                            lambda x: f"{x:.2%}" if pd.notna(x) else "N/A"
-                        )
-                    display_df['Years Held'] = display_df['Years Held'].map(lambda x: f"{x:.2f}")
-                    st.dataframe(display_df)
-            else:
-                st.info("데이터 기간이 너무 짧아 시작일별 민감도를 계산할 수 없습니다.")
+                    st.subheader("Comparison Metrics")
+                    metric_rows = []
+                    for name, strat, bt_c in results:
+                        is_dca_c = bt_c.installment_amount > 0 and bt_c.installment_frequency != 'None'
+                        mwr_val = getattr(bt_c, 'mwr', float('nan'))
+                        mwr_str = f"{mwr_val:+.2%}" if is_dca_c and mwr_val == mwr_val else "—"
+                        bench_is_inflation = getattr(bt_c, 'benchmark_is_inflation', False)
+                        beta_str = f"{bt_c.beta:.2f}" if not bench_is_inflation else "N/A"
+                        alpha_str = f"{bt_c.alpha:+.2%}" if not bench_is_inflation else "N/A"
+                        roi = (bt_c.portfolio_value.iloc[-1] / bt_c.invested_capitals.iloc[-1] - 1)
+                        metric_rows.append({
+                            'Strategy': name,
+                            'Init': f"${bt_c.initial_capital:,}",
+                            'Invested': f"${bt_c.invested_capitals.iloc[-1]:,.0f}",
+                            'Final': f"${bt_c.portfolio_value.iloc[-1]:,.0f}",
+                            'ROI': f"{roi:+.2%}",
+                            'CAGR (TWR)': f"{bt_c.cagr:+.2%}",
+                            'MWR (IRR)': mwr_str,
+                            'Vol': f"{bt_c.volatility:.2%}",
+                            'Sharpe': f"{bt_c.sharpe:.2f}",
+                            'Max DD': f"{bt_c.max_drawdown:.2%}",
+                            'Beta': beta_str,
+                            'Alpha': alpha_str,
+                        })
+                    metric_rows.append({
+                        'Strategy': f'Benchmark ({bench_label_c})',
+                        'Init': f"${results[0][2].initial_capital:,}",
+                        'Invested': f"${results[0][2].initial_capital:,}",
+                        'Final': f"${results[0][2].bench_value.iloc[-1]:,.0f}",
+                        'ROI': f"{(results[0][2].bench_value.iloc[-1]/results[0][2].initial_capital - 1):+.2%}",
+                        'CAGR (TWR)': f"{results[0][2].bench_cagr:+.2%}",
+                        'MWR (IRR)': "—",
+                        'Vol': f"{results[0][2].bench_volatility:.2%}",
+                        'Sharpe': f"{results[0][2].bench_sharpe:.2f}",
+                        'Max DD': f"{results[0][2].bench_max_drawdown:.2%}",
+                        'Beta': "1.00",
+                        'Alpha': "0.00%",
+                    })
+                    st.dataframe(pd.DataFrame(metric_rows).set_index('Strategy'), use_container_width=True)
 
-            # --- Asset Level ---
-            st.header("6. Asset-Level Analysis", help="포트폴리오 구성 자산들의 일간 수익률 상관관계를 색상으로 표기한 히트맵입니다. 상관계수가 음수(파란색)이거나 낮은 자산끼리 섞이면 위험 분산(헤지) 효과가 커집니다.")
-            st.subheader("Asset Correlations (Daily Returns)")
-            returns = bt.prices.pct_change().dropna()
-            corr = returns.corr()
-            
-            fig, ax = plt.subplots(figsize=(6, 4))
-            sns.heatmap(corr, annot=True, cmap="coolwarm", vmin=-1, vmax=1, ax=ax)
-            st.pyplot(fig)
 
 # Display usage stats in sidebar
 current_stats = load_stats()
