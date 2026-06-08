@@ -247,18 +247,30 @@ else:
             
             # --- Drawdowns Analysis ---
             st.header("4. Drawdowns Analysis", help="직전 최고점(전고점) 대비 자산이 얼마나 하락했는지(손실폭)를 보여주는 낙폭 차트입니다. 그래프가 아래로 패인 구간이 경제 위기나 하락장 구간입니다.")
-            port_cummax = bt.cumulative_returns.cummax()
-            port_drawdown = (bt.cumulative_returns / port_cummax - 1.0) * 100
-            
-            bench_cummax = bt.bench_cumulative.cummax()
-            bench_drawdown = (bt.bench_cumulative / bench_cummax - 1.0) * 100
-            
-            dd_df = pd.DataFrame({
-                'Portfolio Drawdown (%)': port_drawdown,
-                f'Benchmark ({bench_label}) Drawdown (%)': bench_drawdown
-            })
+
+            def _dollar_drawdown(series):
+                return (series / series.cummax() - 1.0) * 100
+
+            port_dd_dollar = _dollar_drawdown(bt.portfolio_value)
+            bench_dd_lump  = _dollar_drawdown(bt.bench_value)
+
+            dd_cols = {'Portfolio Drawdown (%)': port_dd_dollar}
+            if is_dca and hasattr(bt, 'bench_value_dca'):
+                bench_dd_dca = _dollar_drawdown(bt.bench_value_dca)
+                dd_cols[f'Benchmark ({bench_label}, DCA-matched) Drawdown (%)'] = bench_dd_dca
+                dd_cols[f'Benchmark ({bench_label}, lump-sum) Drawdown (%)']    = bench_dd_lump
+            else:
+                dd_cols[f'Benchmark ({bench_label}) Drawdown (%)'] = bench_dd_lump
+
+            dd_df = pd.DataFrame(dd_cols)
             st.line_chart(dd_df.resample('W').last())
             st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
+            if is_dca:
+                st.caption(
+                    "ℹ️ 이 차트는 **실제 잔고 기준 낙폭**입니다(그로스 차트와 동일한 잔고 시계열에서 계산). "
+                    "DCA 모드에서는 새 적립금이 들어오면 직전 최고점이 갱신되거나 일시적으로 낙폭이 메워지므로, "
+                    "위 지표 표의 **Max Drawdown (TWR 기준 — 적립금 영향 제거된 순수 시장 낙폭)** 보다 절대값이 작을 수 있습니다."
+                )
 
             # --- Start-Date Sensitivity ---
             st.header(
@@ -272,9 +284,12 @@ else:
                 st.info(f"Start-date sensitivity 계산 중 오류: {e}")
 
             if sensitivity is not None and not sensitivity.empty:
+                metric_options = ["CAGR (TWR, lump-sum)", "Total Return (TWR)"]
+                if is_dca and 'Portfolio MWR' in sensitivity.columns:
+                    metric_options.append("MWR (IRR, DCA-aware)")
                 metric_choice = st.radio(
                     "Metric",
-                    ["CAGR (연평균 수익률)", "Total Return (총 수익률)"],
+                    metric_options,
                     index=0,
                     horizontal=True,
                     key="sensitivity_metric",
@@ -283,17 +298,28 @@ else:
                     plot_df = sensitivity[['Portfolio CAGR', 'Benchmark CAGR']].rename(
                         columns={'Benchmark CAGR': f'Benchmark CAGR ({bench_label})'}
                     )
-                else:
+                elif metric_choice.startswith("Total"):
                     plot_df = sensitivity[['Portfolio Total Return', 'Benchmark Total Return']].rename(
                         columns={'Benchmark Total Return': f'Benchmark Total Return ({bench_label})'}
+                    )
+                else:  # MWR
+                    plot_df = sensitivity[['Portfolio MWR', 'Benchmark MWR']].rename(
+                        columns={'Benchmark MWR': f'Benchmark MWR ({bench_label})'}
                     )
                 st.line_chart(plot_df)
                 st.caption("💡 **팁:** 차트 위에서 마우스 휠로 확대/축소가 가능하며, **더블 클릭**하시면 원래 화면으로 복구됩니다.")
 
-                st.caption(
-                    f"각 X축 지점은 '이 날 투자를 시작했다면' 의 가상 시작일이며, 종료일({end_date})까지의 성과를 의미합니다. "
-                    "포트폴리오 전략(비중/리밸런싱)은 동일하게 유지되고 시작 시점만 달라집니다."
-                )
+                if metric_choice.startswith("MWR"):
+                    st.caption(
+                        f"각 X축 지점은 '이 날부터 동일 일정(초기 ${bt.initial_capital:,.0f} + ${bt.installment_amount:,.0f}/{bt.installment_frequency})으로 시작했다면' "
+                        "의 가상 시작일이며, 종료일까지 실제 투입한 자금에 대한 **연환산 내부수익률(IRR)** 입니다. "
+                        "CAGR(TWR)이 전략의 시간가중 성과라면, 이 MWR은 적립 일정까지 반영한 '내 실제 돈 기준' 성과입니다."
+                    )
+                else:
+                    st.caption(
+                        f"각 X축 지점은 '이 날 투자를 시작했다면' 의 가상 시작일이며, 종료일({end_date})까지의 성과를 의미합니다. "
+                        "이 선은 lump-sum 기준(시간가중 수익률, TWR)으로, 적립금 일정에 의존하지 않습니다."
+                    )
 
                 # Summary stats
                 best = sensitivity['Portfolio CAGR'].idxmax()
@@ -317,10 +343,11 @@ else:
 
                 with st.expander("Raw data (start date × return)"):
                     display_df = sensitivity.copy()
-                    display_df['Portfolio CAGR'] = display_df['Portfolio CAGR'].map(lambda x: f"{x:.2%}")
-                    display_df['Benchmark CAGR'] = display_df['Benchmark CAGR'].map(lambda x: f"{x:.2%}")
-                    display_df['Portfolio Total Return'] = display_df['Portfolio Total Return'].map(lambda x: f"{x:.2%}")
-                    display_df['Benchmark Total Return'] = display_df['Benchmark Total Return'].map(lambda x: f"{x:.2%}")
+                    pct_cols = [c for c in display_df.columns if c != 'Years Held']
+                    for c in pct_cols:
+                        display_df[c] = display_df[c].map(
+                            lambda x: f"{x:.2%}" if pd.notna(x) else "N/A"
+                        )
                     display_df['Years Held'] = display_df['Years Held'].map(lambda x: f"{x:.2f}")
                     st.dataframe(display_df)
             else:

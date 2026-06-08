@@ -295,15 +295,64 @@ class PortfolioBacktest:
         except (ValueError, RuntimeError):
             return float('nan')
 
+    def _mwr_for_window(self, window_returns):
+        """IRR over a hypothetical (re-)start at window_returns.index[0]:
+        invest initial_capital on day 0, contribute installment_amount on each
+        installment trigger inside the window, redeem at the last day.
+
+        For lump-sum (no installments) this collapses to the window's CAGR.
+        Returns NaN if IRR cannot be bracketed.
+        """
+        if len(window_returns) < 2:
+            return float('nan')
+
+        dates = window_returns.index
+        years = (dates[-1] - dates[0]).days / 365.25
+        if years <= 0:
+            return float('nan')
+
+        cum = (1 + window_returns).cumprod()
+        final_cum = float(cum.iloc[-1])
+
+        if self.installment_amount == 0 or self.installment_frequency == 'None':
+            return final_cum ** (1 / years) - 1
+
+        # Build cash flow schedule from the window's start.
+        final_value = float(self.initial_capital) * final_cum
+        cash_dates = [dates[0]]
+        cash_amts = [-float(self.initial_capital)]
+        for i in range(1, len(dates)):
+            is_inst = False
+            if self.installment_frequency == 'Monthly' and dates[i].month != dates[i - 1].month:
+                is_inst = True
+            elif self.installment_frequency == 'Annually' and dates[i].year != dates[i - 1].year:
+                is_inst = True
+            if is_inst:
+                cash_dates.append(dates[i])
+                cash_amts.append(-float(self.installment_amount))
+                # Future value at end of each installment, growing from its date.
+                final_value += float(self.installment_amount) * (final_cum / float(cum.iloc[i]))
+        cash_dates.append(dates[-1])
+        cash_amts.append(final_value)
+
+        t0 = cash_dates[0]
+        times = np.array([(d - t0).days / 365.25 for d in cash_dates])
+        amts = np.array(cash_amts)
+
+        def npv(r):
+            return float(np.sum(amts / (1.0 + r) ** times))
+
+        try:
+            return brentq(npv, -0.999, 10.0, maxiter=200, xtol=1e-8)
+        except (ValueError, RuntimeError):
+            return float('nan')
+
     def rolling_start_analysis(self, min_window_days=60):
         """For each candidate start date (1st trading day of each month), compute
-        the CAGR and total return that would have resulted from holding through
-        to self.end_date, using the already-simulated daily strategy returns.
-
-        Note: this treats each start as a lump-sum investment under the same
-        rebalance policy. Installment cash flows are not re-simulated; the
-        daily returns series already excludes cash-flow effects, so this is
-        exact for lump-sum and a close approximation for DCA.
+        the CAGR and total return through self.end_date using the already-
+        simulated daily strategy returns. When installments are active, also
+        compute a per-start MWR (IRR) simulating the same DCA schedule from
+        that start date.
         """
         port_rets = self.portfolio_returns
         bench_rets = self.bench_returns.reindex(port_rets.index).fillna(0)
@@ -312,7 +361,10 @@ class PortfolioBacktest:
             return pd.DataFrame(columns=[
                 'Portfolio CAGR', 'Benchmark CAGR',
                 'Portfolio Total Return', 'Benchmark Total Return',
+                'Portfolio MWR', 'Benchmark MWR',
             ])
+
+        is_dca = self.installment_amount > 0 and self.installment_frequency != 'None'
 
         # Use the first trading day of each month as a start candidate.
         monthly_firsts = port_rets.groupby([port_rets.index.year, port_rets.index.month]).apply(
@@ -336,13 +388,17 @@ class PortfolioBacktest:
             p_cagr = p_cum ** (1 / years) - 1 if years > 0 else 0.0
             b_cagr = b_cum ** (1 / years) - 1 if years > 0 else 0.0
 
-            records.append({
+            rec = {
                 'start_date': start,
                 'Portfolio CAGR': p_cagr,
                 'Benchmark CAGR': b_cagr,
                 'Portfolio Total Return': p_cum - 1.0,
                 'Benchmark Total Return': b_cum - 1.0,
                 'Years Held': years,
-            })
+            }
+            if is_dca:
+                rec['Portfolio MWR'] = self._mwr_for_window(window)
+                rec['Benchmark MWR'] = self._mwr_for_window(bwindow)
+            records.append(rec)
 
         return pd.DataFrame(records).set_index('start_date')

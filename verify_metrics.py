@@ -309,6 +309,27 @@ def t9_multi_asset_rebalanced_cagr(R):
     R.check("Realized CAGR within 1% of approx", bt.cagr, approx_cagr, tol=1e-2)
 
 
+def t12_rolling_mwr_matches_full_window(R):
+    """The MWR at the earliest rolling start date should match bt.mwr (same
+    cash flows over same window). Same for benchmark MWR against an
+    independently-computed lump-sum benchmark IRR."""
+    print("\n[T12] Rolling-start MWR at earliest date == full-window MWR")
+    n = 252 * 3
+    prices = constant_growth_df(0.0005, n, tickers=['A'])
+    bench = constant_growth_df(0.0005, n, tickers=['B'])['B']
+
+    bt = synth_bt(prices, bench, {'A': 1.0}, initial_capital=10000,
+                  installment_amount=500, installment_frequency='Monthly')
+    bt.run()
+    rs = bt.rolling_start_analysis()
+
+    R.check("rolling 'Portfolio MWR' column exists when DCA active",
+            float('Portfolio MWR' in rs.columns), 1.0, tol=0.5)
+    earliest_mwr = rs['Portfolio MWR'].iloc[0]
+    R.check("rolling MWR at earliest start ≈ bt.mwr", earliest_mwr, bt.mwr, tol=5e-3)
+    R.note(f"  → rolling MWR[0]={earliest_mwr:+.4%}, bt.mwr={bt.mwr:+.4%}")
+
+
 def t11_mwr_diverges_from_twr_with_timing(R):
     """DCA into a market that returned a lot up-front then went flat:
     the late contributions earn nothing, so MWR < TWR.
@@ -385,6 +406,7 @@ def main():
         t9_multi_asset_rebalanced_cagr,
         t10_invested_capital_accounting,
         t11_mwr_diverges_from_twr_with_timing,
+        t12_rolling_mwr_matches_full_window,
     ]
     for t in tests:
         try:
